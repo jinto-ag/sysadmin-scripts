@@ -13,6 +13,6 @@ Currently, only the main branch (`latest`) is supported for security updates.
 
 Please do not report security vulnerabilities through public GitHub issues.
 
-Instead, please report them via email to: security@example.com (Please replace with your actual security team email).
+Instead, please report them via email to: <security@example.com> (Please replace with your actual security team email).
 
 We will acknowledge receipt of your vulnerability report and will strive to send you regular updates about our progress. If the vulnerability is accepted, we will coordinate a timeline to patch it and release the fix.
