@@ -1,0 +1,45 @@
+name: CI Check
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  lint:
+    name: Lint & Style
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Run shellcheck
+        run: |
+          find . -name "*.sh" -print0 | xargs -0 -I {} shellcheck -x {}
+          
+      - name: Bash syntax check
+        run: |
+          find . -name "*.sh" -print0 | xargs -0 -I {} bash -n {}
+
+  test:
+    name: Execute Mock E2E
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Podman
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman
+
+      - name: Run mock test pipeline
+        run: |
+          # Use a fake, valid-looking TS auth key for mock execution
+          cd devnet
+          echo "TAILSCALE_AUTHKEY=tskey-auth-fake-key-for-testing" > .env
+          chmod +x test-mock.sh
+          ./test-mock.sh
