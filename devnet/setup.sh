@@ -1902,8 +1902,8 @@ cmd_test() {
 
   echo ""
   
-  # 1. Syntax Check
-  _t "Bash syntax check (bash -n)" "bash -n \"\$0\""
+  # 1. Syntax Check (skip if piped via curl)
+  _t "Bash syntax check (bash -n)" "[[ ! -f \"\$0\" ]] || bash -n \"\$0\""
 
   # 2. Core generic utilities check
   for tool in curl awk lsof nslookup launchctl; do
