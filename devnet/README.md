@@ -14,7 +14,7 @@ An enterprise-grade, production-ready macOS & Podman development environment boo
 ### One-line Installation
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jinto-ag/sysadmin-scripts/main/devnet/devnet.sh | bash -s -- install
+curl -fsSL https://raw.githubusercontent.com/jinto-ag/sysadmin-scripts/main/devnet/setup.sh | bash -s -- install
 ```
 
 ### Local Execution
@@ -22,7 +22,7 @@ curl -fsSL https://raw.githubusercontent.com/jinto-ag/sysadmin-scripts/main/devn
 If you cloned the repository locally:
 
 ```bash
-./devnet.sh install
+./setup.sh install
 ```
 
 ### Dashboard & Status
@@ -30,7 +30,7 @@ If you cloned the repository locally:
 To view a live status dashboard of all running background daemons:
 
 ```bash
-./devnet.sh status
+./setup.sh status
 ```
 
 ### Diagnostics
@@ -38,7 +38,7 @@ To view a live status dashboard of all running background daemons:
 Run a complete health check that sweeps all processes and background configurations:
 
 ```bash
-./devnet.sh doctor
+./setup.sh doctor
 ```
 
 ### Process Management
@@ -46,8 +46,8 @@ Run a complete health check that sweeps all processes and background configurati
 You can smoothly stop or start the automated background jobs:
 
 ```bash
-./devnet.sh stop
-./devnet.sh start
+./setup.sh stop
+./setup.sh start
 ```
 
 ## Testing (Mock MacOS)
