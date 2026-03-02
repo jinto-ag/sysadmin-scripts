@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # ================================================================
-#  devnet.sh — Enterprise macOS AI Stack Manager v1.0.0
+#  setup.sh — Enterprise macOS AI Stack Manager v1.0.0
 #
 #  Stack:
 #    • Ollama      → host (full Metal GPU), sandboxed via macOS
@@ -12,20 +12,20 @@
 #    • gum         → interactive TUI configuration
 #
 #  Usage:
-#    ./devnet.sh install [--defaults]   Interactive or fully automated
-#    ./devnet.sh uninstall [--purge]    Remove everything (--purge = logs too)
-#    ./devnet.sh reset [--defaults]     Clean reinstall
-#    ./devnet.sh start                  Start all stopped services
-#    ./devnet.sh stop                   Stop services gracefully
-#    ./devnet.sh status                 Live health dashboard
-#    ./devnet.sh logs [svc]             Tail logs (ollama|tailscale|podman|all)
-#    ./devnet.sh doctor                 Diagnose + auto-repair
-#    ./devnet.sh version                Print version
+#    ./setup.sh install [--defaults]   Interactive or fully automated
+#    ./setup.sh uninstall [--purge]    Remove everything (--purge = logs too)
+#    ./setup.sh reset [--defaults]     Clean reinstall
+#    ./setup.sh start                  Start all stopped services
+#    ./setup.sh stop                   Stop services gracefully
+#    ./setup.sh status                 Live health dashboard
+#    ./setup.sh logs [svc]             Tail logs (ollama|tailscale|podman|all)
+#    ./setup.sh doctor                 Diagnose + auto-repair
+#    ./setup.sh version                Print version
 #
 #  Env override (any variable below can be pre-set to skip its prompt):
 #    export TAILSCALE_AUTHKEY=tskey-auth-XXXX
 #    export TAILSCALE_HOSTNAME=mac-ai
-#    ./devnet.sh install --defaults
+#    ./setup.sh install --defaults
 # ================================================================
 
 set -uo pipefail   # -u: unbound vars = error, -o pipefail: pipe failures caught
@@ -108,7 +108,7 @@ warn()   { echo -e "${YELLOW}[$(_ts) WARN]${NC}  $*"; }
 step()   { echo -e "\n${BOLD}${BLUE}━━ $* ${NC}"; }
 die() {
   echo -e "\n${RED}[$(_ts) FAIL]${NC}  $*" >&2
-  echo -e "${DIM}  Tip: run './devnet.sh doctor' to diagnose issues${NC}" >&2
+  echo -e "${DIM}  Tip: run './setup.sh doctor' to diagnose issues${NC}" >&2
   exit 1
 }
 # Log to file silently (for long-running operations)
@@ -453,7 +453,7 @@ phase_configure() {
     "$GUM_BIN" style \
       --foreground 212 --border-foreground 212 --border rounded \
       --align center --width 60 --padding "0 2" \
-      "devnet.sh v${DEVNET_VERSION} — Configuration" \
+      "setup.sh v${DEVNET_VERSION} — Configuration" \
       "Press ENTER to accept defaults · Ctrl+C to abort" 2>/dev/null || true
     echo ""
   fi
@@ -626,7 +626,7 @@ _write_sandbox_profile() {
 
   # Build the profile with real paths substituted in
   file_write "$SANDBOX_PROFILE" <<SBPROFILE
-;; devnet.sh Ollama Sandbox Profile v${DEVNET_VERSION}
+;; setup.sh Ollama Sandbox Profile v${DEVNET_VERSION}
 ;; Restricts the Ollama inference process to only access its model directory.
 ;; sandbox-exec is deprecated in man pages but remains functional on macOS 12-15.
 ;; Default: DENY everything, then whitelist only what Ollama strictly needs.
@@ -729,7 +729,7 @@ step_setup_gpu_memory() {
   local gpu_wrapper="${WRAPPER_DIR}/set-gpu-memory.sh"
   file_write "$gpu_wrapper" <<SCRIPT
 #!/bin/bash
-# devnet.sh: Set Metal GPU memory at boot
+# setup.sh: Set Metal GPU memory at boot
 TOTAL_MB=\$(( \$(sysctl -n hw.memsize) / 1048576 ))
 GPU_MB=\$(( TOTAL_MB * ${GPU_MEMORY_PERCENT} / 100 ))
 /usr/sbin/sysctl iogpu.wired_limit_mb=\${GPU_MB}
@@ -1056,7 +1056,7 @@ step_setup_podman() {
   local machine_wrapper="${WRAPPER_DIR}/start-podman-machine.sh"
   file_write "$machine_wrapper" <<SCRIPT
 #!/bin/bash
-# devnet.sh: Start Podman machine on login
+# setup.sh: Start Podman machine on login
 export HOME="${HOME}"
 export PATH="${BREW_PREFIX}/bin:/usr/local/bin:/usr/bin:/bin"
 LOG="${LOG_DIR}/podman-machine.log"
@@ -1332,7 +1332,7 @@ step_setup_firewall() {
 # ──────────────────────────────────────────────────────────────
 save_config_snapshot() {
   file_write "$CONFIG_SNAPSHOT" <<CFG
-# devnet.sh config snapshot — $(date '+%F %T')
+# setup.sh config snapshot — $(date '+%F %T')
 DEVNET_VERSION="${DEVNET_VERSION}"
 TAILSCALE_HOSTNAME="${TAILSCALE_HOSTNAME}"
 OLLAMA_PORT="${OLLAMA_PORT}"
@@ -1367,7 +1367,7 @@ print_summary() {
 
   echo ""
   echo -e "${BOLD}${GREEN}╔══════════════════════════════════════════════════════════════╗${NC}"
-  echo -e "${BOLD}${GREEN}║   ✅  devnet.sh v${DEVNET_VERSION} — Installation Complete              ║${NC}"
+  echo -e "${BOLD}${GREEN}║   ✅  setup.sh v${DEVNET_VERSION} — Installation Complete              ║${NC}"
   echo -e "${BOLD}${GREEN}╚══════════════════════════════════════════════════════════════╝${NC}"
   printf "  %-32s ${CYAN}%s${NC}\n" "Tailnet IP:"             "$ts_ip"
   printf "  %-32s ${CYAN}%s${NC}\n" "MagicDNS:"               "$ts_dns"
@@ -1387,13 +1387,13 @@ print_summary() {
   echo -e "     2. Hit: ${CYAN}https://${ts_dns}/api/tags${NC}"
   echo ""
   echo -e "  ${BOLD}🛠  Management:${NC}"
-  echo -e "     ./devnet.sh status                  Live dashboard"
-  echo -e "     ./devnet.sh doctor                  Diagnose + auto-repair"
-  echo -e "     ./devnet.sh logs ollama             Tail Ollama logs"
-  echo -e "     ./devnet.sh stop / start            Stop or restart all"
-  echo -e "     ./devnet.sh uninstall               Remove all (keeps models)"
-  echo -e "     ./devnet.sh uninstall --purge       Remove all + logs + config"
-  echo -e "     ./devnet.sh reset [--defaults]      Full clean reinstall"
+  echo -e "     ./setup.sh status                  Live dashboard"
+  echo -e "     ./setup.sh doctor                  Diagnose + auto-repair"
+  echo -e "     ./setup.sh logs ollama             Tail Ollama logs"
+  echo -e "     ./setup.sh stop / start            Stop or restart all"
+  echo -e "     ./setup.sh uninstall               Remove all (keeps models)"
+  echo -e "     ./setup.sh uninstall --purge       Remove all + logs + config"
+  echo -e "     ./setup.sh reset [--defaults]      Full clean reinstall"
   echo -e "${GREEN}════════════════════════════════════════════════════════════════${NC}\n"
 }
 
@@ -1421,7 +1421,7 @@ cmd_install() {
     "$GUM_BIN" style \
       --foreground 45 --border-foreground 45 --border double \
       --align center --width 64 --margin "1 0" --padding "1 3" \
-      "devnet.sh v${DEVNET_VERSION}" \
+      "setup.sh v${DEVNET_VERSION}" \
       "Enterprise macOS AI Stack" \
       "Tailscale + Ollama + Podman" 2>/dev/null || true
   fi
@@ -1544,7 +1544,7 @@ cmd_uninstall() {
   local PURGE=false
   [[ "${1:-}" == "--purge" ]] && PURGE=true
 
-  echo -e "\n${BOLD}${RED}  devnet.sh — Uninstall${NC}"
+  echo -e "\n${BOLD}${RED}  setup.sh — Uninstall${NC}"
   [[ "$PURGE" == "true" ]] && warn "PURGE mode: logs and config will also be deleted."
   echo ""
 
@@ -1563,7 +1563,7 @@ cmd_uninstall() {
 # ──────────────────────────────────────────────────────────────
 cmd_reset() {
   local use_defaults="${1:-}"
-  echo -e "\n${BOLD}${YELLOW}  devnet.sh — Reset (uninstall + fresh install)${NC}\n"
+  echo -e "\n${BOLD}${YELLOW}  setup.sh — Reset (uninstall + fresh install)${NC}\n"
   ensure_gum
 
   ask_confirm "_CONFIRM_RESET" "This will uninstall then reinstall everything. Continue?" "false"
@@ -1635,7 +1635,7 @@ cmd_status() {
   local podman_bin="${BREW_PREFIX}/bin/podman"
 
   echo -e "\n${BOLD}${CYAN}╔══════════════════════════════════════════════════════════╗${NC}"
-  echo -e "${BOLD}${CYAN}║   devnet.sh v${DEVNET_VERSION} — Live Status Dashboard               ║${NC}"
+  echo -e "${BOLD}${CYAN}║   setup.sh v${DEVNET_VERSION} — Live Status Dashboard               ║${NC}"
   echo -e "${BOLD}${CYAN}╚══════════════════════════════════════════════════════════╝${NC}\n"
 
   local ts_ip="N/A" ts_dns="N/A"
@@ -1665,7 +1665,7 @@ cmd_status() {
   if nslookup google.com 8.8.8.8 &>/dev/null; then
     echo -e "   DNS:         ${GREEN}✓ (resolving OK)${NC}"
   else
-    echo -e "   DNS:         ${RED}✗ BROKEN — run: ./devnet.sh doctor${NC}"
+    echo -e "   DNS:         ${RED}✗ BROKEN — run: ./setup.sh doctor${NC}"
   fi
 
   # ── Ollama ────────────────────────────────────────────
@@ -1806,8 +1806,8 @@ cmd_doctor() {
     ok "All ${total_checks} checks passed — stack is fully healthy."
   else
     warn "${issues} issue(s) detected out of ${total_checks} checks."
-    echo -e "  ${DIM}Run './devnet.sh logs all' for detailed logs.${NC}"
-    echo -e "  ${DIM}Run './devnet.sh reset' for a full clean reinstall.${NC}"
+    echo -e "  ${DIM}Run './setup.sh logs all' for detailed logs.${NC}"
+    echo -e "  ${DIM}Run './setup.sh reset' for a full clean reinstall.${NC}"
   fi
   echo ""
 }
@@ -1877,7 +1877,7 @@ cmd_logs() {
 cmd_test() {
   local mode="${1:-standalone}"
   
-  echo -e "\n${BOLD}${CYAN}  devnet.sh — Self-Test Suite${NC}"
+  echo -e "\n${BOLD}${CYAN}  setup.sh — Self-Test Suite${NC}"
   if [[ "$mode" == "dry-run" ]]; then
     info "Running tests in --dry-run mode (Install will proceed if clear)"
   elif [[ "$mode" == "install" ]]; then
@@ -1943,7 +1943,7 @@ cmd_version() {
     # shellcheck source=/dev/null
     source "$CONFIG_SNAPSHOT" 2>/dev/null || true
   fi
-  echo "devnet.sh v${DEVNET_VERSION}"
+  echo "setup.sh v${DEVNET_VERSION}"
   echo "  Installed:  ${INSTALL_DATE:-not installed}"
   echo "  Config:     ${CONFIG_SNAPSHOT}"
   echo "  Manifest:   ${MANIFEST}"
@@ -1959,10 +1959,10 @@ cmd_help() {
     "$GUM_BIN" style \
       --foreground 45 --border-foreground 45 --border rounded \
       --align left --width 64 --padding "0 2" \
-      "devnet.sh v${DEVNET_VERSION} — Help" 2>/dev/null || true
+      "setup.sh v${DEVNET_VERSION} — Help" 2>/dev/null || true
     echo ""
   else
-    echo -e "${BOLD}devnet.sh v${DEVNET_VERSION}${NC} — Enterprise macOS AI Stack Manager"
+    echo -e "${BOLD}setup.sh v${DEVNET_VERSION}${NC} — Enterprise macOS AI Stack Manager"
     echo ""
   fi
 
@@ -1994,7 +1994,7 @@ cmd_help() {
   echo -e "  export PODMAN_CPUS=6"
   echo -e "  export PODMAN_MEMORY_MB=12288"
   echo -e "  export ENABLE_SANDBOX=true"
-  echo -e "  ./devnet.sh install --defaults"
+  echo -e "  ./setup.sh install --defaults"
   echo ""
   echo -e "  ${BOLD}Architecture:${NC}"
   echo -e "  Ollama      → host (Metal GPU), 127.0.0.1 only, sandbox-exec hardened"
