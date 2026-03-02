@@ -8,4 +8,4 @@ TS_KEY="${TS_KEY#\"}"
 TS_KEY="${TS_KEY%\'}"
 TS_KEY="${TS_KEY#\'}"
 
-podman run --rm -e TAILSCALE_AUTHKEY="$TS_KEY" -v "$(pwd):/host" -it mock-macos bash -c "cp /host/setup.sh /tmp/setup.sh && chmod +x /tmp/setup.sh && cd /tmp && ./setup.sh install && ./setup.sh doctor && ./setup.sh status && ./setup.sh stop && ./setup.sh start"
+podman run --rm -e TAILSCALE_AUTHKEY="$TS_KEY" -v "$(pwd):/host" -it mock-macos bash -c "cp /host/setup.sh /tmp/setup.sh && chmod +x /tmp/setup.sh && cd /tmp && ./setup.sh --force --defaults install && ./setup.sh --force doctor && ./setup.sh status && ./setup.sh stop && ./setup.sh start"

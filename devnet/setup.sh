@@ -36,6 +36,7 @@ umask 077
 readonly DEVNET_VERSION="1.0.0"
 readonly DEVNET_NAME="devnet"
 DRY_RUN="false"
+FORCE_MODE="false"
 
 # ──────────────────────────────────────────────────────────────
 # SYSTEM CONSTANTS
@@ -78,7 +79,7 @@ TAILSCALE_HOSTNAME="${TAILSCALE_HOSTNAME:-mac-ai}"
 ENABLE_TAILSCALE_SSH="${ENABLE_TAILSCALE_SSH:-true}"
 OLLAMA_PORT="${OLLAMA_PORT:-11434}"
 OLLAMA_HOME="${OLLAMA_HOME:-${HOME}/.ollama}"
-OLLAMA_ORIGINS="${OLLAMA_ORIGINS:-http://127.0.0.1:\${OLLAMA_PORT},http://localhost:\${OLLAMA_PORT}}"
+OLLAMA_ORIGINS="${OLLAMA_ORIGINS:-}"  # default set dynamically in phase_configure if empty
 OLLAMA_NUM_PARALLEL="${OLLAMA_NUM_PARALLEL:-4}"
 OLLAMA_MAX_LOADED_MODELS="${OLLAMA_MAX_LOADED_MODELS:-2}"
 OLLAMA_KEEP_ALIVE="${OLLAMA_KEEP_ALIVE:-30m}"
@@ -208,14 +209,16 @@ ask() {
   local var="$1" label="$2" default="$3" required="${4:-false}"
   local cur="${!var:-}"
 
-  # Already set via environment — don't ask
+  # Already set via environment — don't ask (unless FORCE_MODE is on AND not in defaults mode)
   if [[ -n "$cur" ]]; then
-    if [[ "$var" == "TAILSCALE_AUTHKEY" ]]; then
-      info "  ${var} = *** (env)"
-    else
-      info "  ${var} = ${cur} (env)"
+    if [[ "$FORCE_MODE" == "false" || "$USE_DEFAULTS" == "true" ]]; then
+      if [[ "$var" == "TAILSCALE_AUTHKEY" ]]; then
+        info "  ${var} = *** (env)"
+      else
+        info "  ${var} = ${cur} (env)"
+      fi
+      return
     fi
-    return
   fi
 
   # --defaults mode: use default unless field is required and has no default
@@ -250,8 +253,11 @@ ask_confirm() {
   local var="$1" label="$2" default="${3:-true}"
   local cur="${!var:-}"
 
+  # Already set via environment — don't ask (unless FORCE_MODE is on AND not in defaults mode)
   if [[ -n "$cur" ]]; then
-    info "  ${var} = ${cur} (env)"; return
+    if [[ "$FORCE_MODE" == "false" || "$USE_DEFAULTS" == "true" ]]; then
+      info "  ${var} = ${cur} (env)"; return
+    fi
   fi
   if [[ "$USE_DEFAULTS" == "true" ]]; then
     printf -v "$var" '%s' "$default"
@@ -482,6 +488,9 @@ phase_configure() {
   # ── Ollama ────────────────────────────────────────────────
   ask OLLAMA_PORT          "Ollama API port"           "$OLLAMA_PORT"
   ask OLLAMA_HOME          "Ollama model storage dir"  "$OLLAMA_HOME"
+  
+  # Set default origins if not provided (use current port)
+  [[ -z "$OLLAMA_ORIGINS" ]] && OLLAMA_ORIGINS="http://127.0.0.1:${OLLAMA_PORT},http://localhost:${OLLAMA_PORT}"
   ask OLLAMA_ORIGINS       "Allowed CORS origins"      "$OLLAMA_ORIGINS"
   ask OLLAMA_NUM_PARALLEL  "Max parallel requests"     "$OLLAMA_NUM_PARALLEL"
   ask OLLAMA_MAX_LOADED_MODELS "Max loaded models in memory" "$OLLAMA_MAX_LOADED_MODELS"
@@ -539,6 +548,7 @@ phase_configure() {
   printf "  %-30s %s\n" "Tailscale hostname:"     "$TAILSCALE_HOSTNAME"
   printf "  %-30s %s\n" "Ollama port:"            "$OLLAMA_PORT"
   printf "  %-30s %s\n" "Ollama model dir:"       "$OLLAMA_HOME"
+  printf "  %-30s %s\n" "CORS Origins:"           "$OLLAMA_ORIGINS"
   printf "  %-30s %s\n" "Parallel requests:"      "$OLLAMA_NUM_PARALLEL"
   printf "  %-30s %s\n" "Max loaded models:"      "$OLLAMA_MAX_LOADED_MODELS"
   [[ $IS_APPLE_SILICON == true ]] && \
@@ -722,7 +732,7 @@ step_setup_gpu_memory() {
   info "RAM: ${total_ram_mb}MB | Allocating ${gpu_mb}MB (${GPU_MEMORY_PERCENT}%) to Metal GPU"
 
   # Apply immediately (non-destructive sysctl)
-  sys_exec sudo sysctl iogpu.wired_limit_mb="${gpu_mb}" \
+  sys_exec sudo sysctl iogpu.wired_limit_mb="${gpu_mb}" > /dev/null \
     || die "sysctl iogpu.wired_limit_mb failed."
 
   # Write persistent wrapper script
@@ -1750,12 +1760,25 @@ cmd_doctor() {
     else
       echo -e "   ${RED}✗${NC} ${label}"
       issues=$((issues + 1))
+      
       if [[ -n "$fix_cmd" ]]; then
-        warn "    Attempting auto-fix..."
-        if eval "$fix_cmd" 2>/dev/null; then
-          ok "    Fixed."
+        local do_fix=false
+        if [[ "$FORCE_MODE" == "true" ]]; then
+          do_fix=true
         else
-          warn "    Auto-fix failed — manual action needed."
+          # Always prompt for repair in doctor mode unless forced
+          if ask_confirm "_DO_FIX" "    Issue found: $label. Attempt auto-repair?" "true"; then
+             [[ "$_DO_FIX" == "true" ]] && do_fix=true
+          fi
+        fi
+
+        if [[ "$do_fix" == "true" ]]; then
+          warn "    Attempting repair..."
+          if eval "$fix_cmd" 2>/dev/null; then
+            ok "    Repaired."
+          else
+            warn "    Repair failed — manual action needed."
+          fi
         fi
       fi
     fi
@@ -1977,9 +2000,12 @@ cmd_help() {
   echo -e "  status                    Live health dashboard"
   echo -e "  test                      Run internal self-diagnostic suite"
   echo -e "  logs [svc]                Tail logs — svc: ollama|tailscale|podman|gpu|all"
-  echo -e "  doctor                    Diagnose + auto-repair all issues"
+  echo -e "  doctor [--force]          Diagnose + auto-repair all issues"
   echo -e "  version                   Show version + install info"
   echo ""
+  echo -e "  ${BOLD}Global Flags:${NC}"
+  echo -e "  -f, --force               Force full reconfiguration (overwrite env/confirmations)"
+  echo -e "  --dry-run                 Simulate changes without modifying system"
   echo -e "  ${BOLD}Required for install:${NC}"
   echo -e "  export TAILSCALE_AUTHKEY=tskey-auth-XXXX"
   echo -e "  (Get one: https://login.tailscale.com/admin/settings/keys)"
@@ -2011,7 +2037,19 @@ main() {
   # Always create log dir first so logging never fails
   mkdir -p "$LOG_DIR" 2>/dev/null || true
 
-  # Parse global flags before dispatching
+  # Parse global flags
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -f|--force)  FORCE_MODE="true"; shift ;;
+      --dry-run)   DRY_RUN="true"; shift ;;
+      --defaults)  USE_DEFAULTS="true"; shift ;;
+      -*) # Assume it's a command-specific flag or stop at command
+          break ;;
+      *) break ;;
+    esac
+  done
+
+  # Parse command
   local cmd="${1:-help}"
   shift || true
 
@@ -2024,7 +2062,7 @@ main() {
     status)     cmd_status ;;
     test)       ensure_gum; cmd_test "standalone" ;;
     logs)       cmd_logs      "$@" ;;
-    doctor)     ensure_gum; cmd_doctor ;;
+    doctor)     ensure_gum; cmd_doctor "$@" ;;
     version)    cmd_version ;;
     help|--help|-h) ensure_gum; cmd_help ;;
     *)
