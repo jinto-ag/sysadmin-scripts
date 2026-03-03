@@ -164,8 +164,8 @@ pass "test suite"
 echo -e "\n━━ version"
 VER=$(./setup.sh version | head -1)
 echo "   Version: $VER"
-[[ "$VER" == *"1.4.0"* ]] || fail "expected v1.4.0, got: $VER"
-pass "version = 1.4.0"
+[[ "$VER" == *"1.5.0"* ]] || fail "expected v1.5.0, got: $VER"
+pass "version = 1.5.0"
 
 echo -e "\n━━ doctor (non-interactive — should only REPORT, not auto-repair)"
 # Redirect stdin from /dev/null to simulate non-TTY stdin
