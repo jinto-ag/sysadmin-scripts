@@ -33,11 +33,33 @@ RUN mv /bin/df /bin/df.real && \
     && chmod +x /usr/local/bin/df
 
 # launchctl / sandbox-exec
-RUN echo '#!/bin/bash\nexit 0' > /usr/local/bin/launchctl && chmod +x /usr/local/bin/launchctl
+# launchctl: handles both legacy (load/unload) and modern (bootstrap/bootout) sub-commands
+RUN printf '#!/bin/bash\n\
+    # Mock launchctl that handles both legacy load/unload and modern bootstrap/bootout\n\
+    case "$1" in\n\
+    bootstrap|bootout|load|unload) exit 0 ;;\n\
+    list) echo "PID\tStatus\tLabel"; echo "-\t-\tcom.devnet.mock" ;;\n\
+    setenv|unsetenv) exit 0 ;;\n\
+    getenv) echo "" ;;\n\
+    *) exit 0 ;;\n\
+    esac\n' > /usr/local/bin/launchctl && chmod +x /usr/local/bin/launchctl
+
 RUN echo '#!/bin/bash\nshift 2; "$@"' > /usr/bin/sandbox-exec && chmod +x /usr/bin/sandbox-exec
 RUN echo '#!/bin/bash\nhostname mac-mock' > /usr/local/bin/scutil && chmod +x /usr/local/bin/scutil
 RUN echo '#!/bin/bash\nexit 0' > /usr/local/bin/defaults && chmod +x /usr/local/bin/defaults
 RUN echo '#!/bin/bash\nexit 0' > /usr/local/bin/networksetup && chmod +x /usr/local/bin/networksetup
+
+# PlistBuddy: used to extract Label from plist files for bootstrap/bootout
+RUN mkdir -p /usr/libexec && \
+    printf '#!/bin/bash\n\
+    # Mock PlistBuddy: extract Label from plist for launchctl compat helpers\n\
+    if [[ "$*" == *"Print Label"* ]]; then\n\
+    plist="${@: -1}"\n\
+    grep -o '"'"'<string>[^<]*</string>'"'"' "$plist" 2>/dev/null | head -1 | sed '"'"'s/<[^>]*>//g'"'"' || echo "com.devnet.mock"\n\
+    fi\n' > /usr/libexec/PlistBuddy && chmod +x /usr/libexec/PlistBuddy
+
+# Install xmllint for plist XML validation in tests
+RUN apt-get update -qq && apt-get install -y -qq libxml2-utils && rm -rf /var/lib/apt/lists/*
 # xattr: Gatekeeper quarantine removal (no-op in mock)
 RUN echo '#!/bin/bash\nexit 0' > /usr/local/bin/xattr && chmod +x /usr/local/bin/xattr
 # osascript: macOS script runner — quit app calls always succeed in mock

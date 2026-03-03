@@ -33,7 +33,7 @@ set -uo pipefail   # -u: unbound vars = error, -o pipefail: pipe failures caught
 
 umask 077
 
-readonly DEVNET_VERSION="1.1.0"
+readonly DEVNET_VERSION="1.2.0"
 readonly DEVNET_NAME="devnet"
 DRY_RUN="false"
 FORCE_MODE="false"
@@ -116,6 +116,75 @@ die() {
 flog() {
   local svc="$1"; shift
   echo "[$(_ts)] $*" >> "${LOG_DIR}/${svc}.log" 2>/dev/null || true
+}
+
+# ──────────────────────────────────────────────────────────────
+# LAUNCHCTL COMPAT HELPERS
+# macOS 13+ (Ventura) deprecated launchctl load/unload in favour
+# of bootstrap/bootout. We try the modern API first and fall back
+# to the legacy API for older systems.
+# ──────────────────────────────────────────────────────────────
+
+# _plist_label <plist_path>  — extract the Label value from a plist
+_plist_label() {
+  local plist="$1"
+  if [[ -x /usr/libexec/PlistBuddy ]]; then
+    /usr/libexec/PlistBuddy -c "Print Label" "$plist" 2>/dev/null || true
+  else
+    grep -o '<string>[^<]*</string>' "$plist" | head -1 | sed 's/<[^>]*>//g' || true
+  fi
+}
+
+# launchd_load_daemon <plist>   — system-level, requires sudo
+launchd_load_daemon() {
+  local plist="$1"
+  if [[ "$DRY_RUN" == "true" ]]; then
+    info "[DRY-RUN] Would bootstrap system daemon: $plist"
+    return 0
+  fi
+  # Idempotent: bootout any existing instance first
+  local label; label=$(_plist_label "$plist")
+  [[ -n "$label" ]] && sudo launchctl bootout "system/${label}" 2>/dev/null || true
+  # Try modern bootstrap (macOS 13+), fall back to legacy load
+  if ! sudo launchctl bootstrap system "$plist" 2>/dev/null; then
+    sudo launchctl load -w "$plist" 2>/dev/null
+  fi
+}
+
+# launchd_unload_daemon <plist>  — system-level, requires sudo
+launchd_unload_daemon() {
+  local plist="$1"
+  local label; label=$(_plist_label "$plist" 2>/dev/null || true)
+  if [[ -n "$label" ]]; then
+    sudo launchctl bootout "system/${label}" 2>/dev/null || true
+  fi
+  sudo launchctl unload -w "$plist" 2>/dev/null || true
+}
+
+# launchd_load_agent <plist>   — user-level, no sudo
+launchd_load_agent() {
+  local plist="$1"
+  if [[ "$DRY_RUN" == "true" ]]; then
+    info "[DRY-RUN] Would bootstrap gui agent: $plist"
+    return 0
+  fi
+  local uid; uid=$(id -u)
+  local label; label=$(_plist_label "$plist")
+  [[ -n "$label" ]] && launchctl bootout "gui/${uid}/${label}" 2>/dev/null || true
+  if ! launchctl bootstrap "gui/${uid}" "$plist" 2>/dev/null; then
+    launchctl load -w "$plist" 2>/dev/null
+  fi
+}
+
+# launchd_unload_agent <plist>  — user-level, no sudo
+launchd_unload_agent() {
+  local plist="$1"
+  local uid; uid=$(id -u)
+  local label; label=$(_plist_label "$plist" 2>/dev/null || true)
+  if [[ -n "$label" ]]; then
+    launchctl bootout "gui/${uid}/${label}" 2>/dev/null || true
+  fi
+  launchctl unload -w "$plist" 2>/dev/null || true
 }
 
 # ──────────────────────────────────────────────────────────────
@@ -264,7 +333,8 @@ ask_confirm() {
     info "  ${var} = ${default} (default)"; return
   fi
 
-  if [[ -n "$GUM_BIN" && -t 1 ]]; then
+  if [[ -n "$GUM_BIN" && -t 0 && -t 1 ]]; then
+    # Both stdin AND stdout must be a real TTY before using gum
     local gum_args=(--affirmative="Yes" --negative="No")
     [[ "$default" == "false" ]] && gum_args=(--default=1 "${gum_args[@]}")
     if "$GUM_BIN" confirm "${gum_args[@]}" "  $label" 2>/dev/null; then
@@ -613,7 +683,13 @@ step_install_deps() {
   command -v tailscale &>/dev/null || die "tailscale not found after install."
   ok "tailscale: $(tailscale version | head -1)"
   [[ "$INSTALL_PODMAN" == "true" ]] && ok "podman: $(podman --version)"
-  [[ "$INSTALL_OPENCODE" == "true" ]] && ok "node: $(node --version)"
+  if [[ "$INSTALL_OPENCODE" == "true" ]]; then
+    if command -v node &>/dev/null; then
+      ok "node: $(node --version)"
+    else
+      warn "node not found — OpenCode CLI install will be skipped (install Node.js separately)."
+    fi
+  fi
 }
 
 # ──────────────────────────────────────────────────────────────
@@ -795,8 +871,8 @@ SCRIPT
 </plist>
 PLIST
 
-  sys_exec sudo launchctl unload  "$PLIST_GPU_DAEMON" 2>/dev/null || true
-  sys_exec sudo launchctl load -w "$PLIST_GPU_DAEMON" \
+  sys_exec launchd_unload_daemon "$PLIST_GPU_DAEMON"
+  sys_exec launchd_load_daemon   "$PLIST_GPU_DAEMON" \
     || die "Failed to load GPU memory LaunchDaemon."
 
   manifest_add "launchdaemon" "$PLIST_GPU_DAEMON"
@@ -847,13 +923,13 @@ step_setup_tailscale() {
     <key>KeepAlive</key><true/>
     <key>ThrottleInterval</key><integer>5</integer>
     <key>StandardOutPath</key><string>${LOG_DIR}/tailscaled.log</string>
-    <key>StandardErrorPath</string><string>${LOG_DIR}/tailscaled.log</string>
+    <key>StandardErrorPath</key><string>${LOG_DIR}/tailscaled.log</string>
 </dict>
 </plist>
 PLIST
 
-  sys_exec sudo launchctl unload  "$PLIST_TS_DAEMON" 2>/dev/null || true
-  sys_exec sudo launchctl load -w "$PLIST_TS_DAEMON" \
+  sys_exec launchd_unload_daemon "$PLIST_TS_DAEMON"
+  sys_exec launchd_load_daemon   "$PLIST_TS_DAEMON" \
     || die "Failed to load Tailscale LaunchDaemon.\n  Check: sudo cat ${LOG_DIR}/tailscaled.log"
   
   if [[ "$DRY_RUN" != "true" ]]; then
@@ -1003,8 +1079,8 @@ step_setup_ollama() {
 </plist>
 PLIST
 
-  sys_exec launchctl unload  "$PLIST_OLLAMA" 2>/dev/null || true
-  sys_exec launchctl load -w "$PLIST_OLLAMA" \
+  sys_exec launchd_unload_agent "$PLIST_OLLAMA"
+  sys_exec launchd_load_agent   "$PLIST_OLLAMA" \
     || die "Failed to load Ollama LaunchAgent.\n  Check: cat ${PLIST_OLLAMA}"
 
   # Health check with retries
@@ -1131,8 +1207,8 @@ SCRIPT
 </plist>
 PLIST
 
-  sys_exec launchctl unload  "$PLIST_PODMAN" 2>/dev/null || true
-  sys_exec launchctl load -w "$PLIST_PODMAN" \
+  sys_exec launchd_unload_agent "$PLIST_PODMAN"
+  sys_exec launchd_load_agent   "$PLIST_PODMAN" \
     || die "Failed to load Podman LaunchAgent."
 
   manifest_add "launchagent" "$PLIST_PODMAN"
@@ -1508,15 +1584,17 @@ _run_uninstall() {
 
   # LaunchAgents (user-level — no sudo)
   while IFS= read -r plist; do
-    info "Unloading: $plist"
-    launchctl unload -w "$plist" 2>/dev/null || true
+    [[ -f "$plist" ]] || continue
+    info "Unloading agent: $plist"
+    launchd_unload_agent "$plist" 2>/dev/null || true
     rm -f "$plist"
   done < <(manifest_entries_of_type "launchagent" 2>/dev/null)
 
   # LaunchDaemons (system-level — sudo required)
   while IFS= read -r plist; do
-    info "Unloading: $plist"
-    sudo launchctl unload -w "$plist" 2>/dev/null || true
+    [[ -f "$plist" ]] || continue
+    info "Unloading daemon: $plist"
+    launchd_unload_daemon "$plist" 2>/dev/null || true
     sudo rm -f "$plist"
   done < <(manifest_entries_of_type "launchdaemon" 2>/dev/null)
 
@@ -1626,8 +1704,8 @@ cmd_start() {
   fi
   local podman_bin="${BREW_PREFIX}/bin/podman"
 
-  sudo launchctl load -w "$PLIST_TS_DAEMON" 2>/dev/null || true
-  sys_exec launchctl load -w "$PLIST_OLLAMA" 2>/dev/null || true
+  launchd_load_daemon "$PLIST_TS_DAEMON" 2>/dev/null || true
+  sys_exec launchd_load_agent "$PLIST_OLLAMA" 2>/dev/null || true
   if [[ "$INSTALL_PODMAN" == "true" ]]; then
     "$podman_bin" machine start "$PODMAN_MACHINE_NAME" 2>/dev/null || true
   fi
@@ -1649,7 +1727,7 @@ cmd_stop() {
   fi
   local podman_bin="${BREW_PREFIX}/bin/podman"
 
-  sys_exec launchctl unload "$PLIST_OLLAMA" 2>/dev/null || true
+  sys_exec launchd_unload_agent "$PLIST_OLLAMA" 2>/dev/null || true
   sys_exec pkill -f "ollama serve" 2>/dev/null || true
   if [[ "$INSTALL_PODMAN" == "true" ]]; then
     "$podman_bin" machine stop "$PODMAN_MACHINE_NAME" 2>/dev/null || true
@@ -1796,12 +1874,14 @@ cmd_doctor() {
         local do_fix=false
         if [[ "$FORCE_MODE" == "true" ]]; then
           do_fix=true
-        else
-          # Unset _DO_FIX before each call so ask_confirm always prompts fresh
-          # (avoids bleed-over from a prior iteration's value)
+        elif [[ -t 0 && -t 1 ]]; then
+          # Interactive TTY: prompt the user
           unset _DO_FIX
           ask_confirm "_DO_FIX" "    Issue found: ${label}. Attempt auto-repair?" "false"
           [[ "${_DO_FIX:-false}" == "true" ]] && do_fix=true
+        else
+          # Non-interactive (curl|bash or no TTY): report only
+          info "    (non-interactive — run 'setup.sh doctor' from terminal, or use --force to auto-repair)"
         fi
 
         if [[ "$do_fix" == "true" ]]; then
@@ -1817,7 +1897,7 @@ cmd_doctor() {
   }
 
   echo ""
-  _chk "tailscaled process running"       "pgrep tailscaled"                   "sudo launchctl load -w ${PLIST_TS_DAEMON}"
+  _chk "tailscaled process running"       "pgrep tailscaled"                   "launchd_load_daemon ${PLIST_TS_DAEMON}"
   _chk "Tailscale has IP"                 "tailscale ip -4"                    ""
   _chk "Internet: raw IP (curl 1.1.1.1)"  "curl -sf --max-time 8 https://1.1.1.1 -o /dev/null"  ""
   _chk "Internet: DNS resolution"          "nslookup google.com 8.8.8.8"                          ""
