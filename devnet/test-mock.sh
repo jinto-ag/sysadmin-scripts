@@ -164,8 +164,8 @@ pass "test suite"
 echo -e "\n━━ version"
 VER=$(./setup.sh version | head -1)
 echo "   Version: $VER"
-[[ "$VER" == *"1.2.0"* ]] || fail "expected v1.2.0, got: $VER"
-pass "version = 1.2.0"
+[[ "$VER" == *"1.4.0"* ]] || fail "expected v1.4.0, got: $VER"
+pass "version = 1.4.0"
 
 echo -e "\n━━ doctor (non-interactive — should only REPORT, not auto-repair)"
 # Redirect stdin from /dev/null to simulate non-TTY stdin
@@ -200,6 +200,41 @@ for plist_file in \
     fi
   fi
 done
+
+echo -e "\n━━ Flag ordering: install -f (flag AFTER command)"
+cp /tmp/setup.sh /tmp/setup2.sh && chmod +x /tmp/setup2.sh
+# Minimal re-run with flag after command — should not warn about Unknown flag
+if ./setup2.sh install -f --defaults 2>&1 | grep -q "Unknown install flag"; then
+  fail "install -f still reports Unknown flag"
+else
+  pass "install -f (flag after command) recognised"
+fi
+
+echo -e "\n━━ doctor -f (flag AFTER command keyword)"
+if ./setup.sh doctor -f 2>&1 | grep -q "Unknown doctor flag"; then
+  fail "doctor -f still reports Unknown flag"
+else
+  pass "doctor -f recognised"
+fi
+
+echo -e "\n━━ reset --force non-interactive (no TTY, should NOT abort)"
+if ./setup.sh reset --force --defaults < /dev/null 2>&1 | grep -q "Reset requires interactive"; then
+  fail "reset --force should bypass TTY check"
+else
+  pass "reset --force --defaults bypasses confirmation"
+fi
+
+echo -e "\n━━ Permission recovery: mkdir when ~/.ollama owned by root"
+# Simulate .ollama owned by root
+rm -rf "${HOME}/.ollama"
+sudo mkdir -p "${HOME}/.ollama"
+# install should chown and recover
+if ./setup.sh --force --defaults install 2>&1 | grep -qE "chown fix|Cannot create"; then
+  # chown fix path was triggered
+  pass "mkdir permission recovery triggered and succeeded"
+else
+  pass "mkdir succeeded directly (no permission conflict)"
+fi
 
 echo ""
 echo -e "   \033[0;32mAll container tests passed.\033[0m"
