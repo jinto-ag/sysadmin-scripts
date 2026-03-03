@@ -38,6 +38,10 @@ RUN echo '#!/bin/bash\nshift 2; "$@"' > /usr/bin/sandbox-exec && chmod +x /usr/b
 RUN echo '#!/bin/bash\nhostname mac-mock' > /usr/local/bin/scutil && chmod +x /usr/local/bin/scutil
 RUN echo '#!/bin/bash\nexit 0' > /usr/local/bin/defaults && chmod +x /usr/local/bin/defaults
 RUN echo '#!/bin/bash\nexit 0' > /usr/local/bin/networksetup && chmod +x /usr/local/bin/networksetup
+# xattr: Gatekeeper quarantine removal (no-op in mock)
+RUN echo '#!/bin/bash\nexit 0' > /usr/local/bin/xattr && chmod +x /usr/local/bin/xattr
+# osascript: macOS script runner — quit app calls always succeed in mock
+RUN echo '#!/bin/bash\nexit 0' > /usr/local/bin/osascript && chmod +x /usr/local/bin/osascript
 
 # macOS Application Firewall Mock
 RUN mkdir -p /usr/libexec/ApplicationFirewall && \

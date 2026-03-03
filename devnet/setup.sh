@@ -33,7 +33,7 @@ set -uo pipefail   # -u: unbound vars = error, -o pipefail: pipe failures caught
 
 umask 077
 
-readonly DEVNET_VERSION="1.0.0"
+readonly DEVNET_VERSION="1.1.0"
 readonly DEVNET_NAME="devnet"
 DRY_RUN="false"
 FORCE_MODE="false"
@@ -273,9 +273,15 @@ ask_confirm() {
       printf -v "$var" '%s' "false"
     fi
   else
-    local yn_hint="Y/n"; [[ "$default" == "false" ]] && yn_hint="y/N"
-    printf "  %s [%s]: " "$label" "$yn_hint"
-    IFS= read -r yn
+    local yn yn_hint="Y/n"
+    [[ "$default" == "false" ]] && yn_hint="y/N"
+    # Guard: only prompt if stdin is a real TTY; otherwise silently use the default
+    if [[ -t 0 ]]; then
+      printf "  %s [%s]: " "$label" "$yn_hint"
+      IFS= read -r yn
+    else
+      yn=""  # non-interactive (e.g. curl | bash): fall through to default
+    fi
     case "${yn:-$([[ "$default" == true ]] && echo y || echo n)}" in
       [Yy]*) printf -v "$var" '%s' "true" ;;
       *)     printf -v "$var" '%s' "false" ;;
@@ -399,35 +405,55 @@ phase_validate() {
   free_gb=$(df -g "$HOME" | awk 'NR==2{print $4}')
   [[ "$free_gb" -ge 5 ]] || die "Less than 5 GB free disk space (${free_gb} GB available)."
 
-  # Port availability
+  # Port availability — kill Ollama if it owns the port, then verify with retry loop
   if lsof -iTCP:"${OLLAMA_PORT}" -sTCP:LISTEN &>/dev/null; then
     if lsof -iTCP:"${OLLAMA_PORT}" -sTCP:LISTEN | grep -qi "ollama"; then
       warn "Ollama is already running on port ${OLLAMA_PORT}. Terminating to allow clean install..."
-      # Prevent auto-respawn if running via macOS App or Homebrew
+      # Step 1: graceful quit via macOS App / Homebrew service
       osascript -e 'quit app "Ollama"' 2>/dev/null || true
       if command -v brew >/dev/null; then
         brew services stop ollama 2>/dev/null || true
       fi
       launchctl unload "$PLIST_OLLAMA" 2>/dev/null || true
+      sleep 1
+      # Step 2: SIGTERM first, then SIGKILL all remaining PIDs
       local ollama_pids
-      ollama_pids=$(lsof -t -iTCP:"${OLLAMA_PORT}" -sTCP:LISTEN)
+      ollama_pids=$(lsof -t -iTCP:"${OLLAMA_PORT}" -sTCP:LISTEN 2>/dev/null || true)
       if [[ -n "$ollama_pids" ]]; then
         while IFS= read -r pid; do
-          if [[ -n "$pid" ]]; then
-            kill -9 "$pid" 2>/dev/null || true
-          fi
+          [[ -n "$pid" ]] && kill    "$pid" 2>/dev/null || true
+        done <<< "$ollama_pids"
+        sleep 1
+        # SIGKILL stragglers
+        ollama_pids=$(lsof -t -iTCP:"${OLLAMA_PORT}" -sTCP:LISTEN 2>/dev/null || true)
+        while IFS= read -r pid; do
+          [[ -n "$pid" ]] && kill -9 "$pid" 2>/dev/null || true
         done <<< "$ollama_pids"
       fi
-      sleep 2
+      # Step 3: poll up to 10 seconds for the port to clear
+      local _port_waited=0 _port_max=10
+      while lsof -iTCP:"${OLLAMA_PORT}" -sTCP:LISTEN &>/dev/null && [[ $_port_waited -lt $_port_max ]]; do
+        sleep 1
+        _port_waited=$((_port_waited + 1))
+      done
+      # Step 4: evaluate outcome
       if lsof -iTCP:"${OLLAMA_PORT}" -sTCP:LISTEN &>/dev/null; then
         warn "Port ${OLLAMA_PORT} is still in use after attempting to terminate Ollama."
         lsof -iTCP:"${OLLAMA_PORT}" -sTCP:LISTEN | head -3
-        die "Free port ${OLLAMA_PORT} before installing, or set OLLAMA_PORT=<other>"
+        if [[ "$FORCE_MODE" == "true" ]]; then
+          warn "FORCE_MODE active — continuing despite port conflict. The new LaunchAgent will replace the process."
+        else
+          die "Free port ${OLLAMA_PORT} before installing, or set OLLAMA_PORT=<other>"
+        fi
       fi
     else
       warn "Port ${OLLAMA_PORT} is already in use by another application."
       lsof -iTCP:"${OLLAMA_PORT}" -sTCP:LISTEN | head -3
-      die "Free port ${OLLAMA_PORT} before installing, or set OLLAMA_PORT=<other>"
+      if [[ "$FORCE_MODE" == "true" ]]; then
+        warn "FORCE_MODE active — continuing despite port conflict."
+      else
+        die "Free port ${OLLAMA_PORT} before installing, or set OLLAMA_PORT=<other>"
+      fi
     fi
   fi
 
@@ -1749,6 +1775,11 @@ cmd_doctor() {
     source "$CONFIG_SNAPSHOT" 2>/dev/null || true
   fi
   step "Running diagnostics"
+
+  if [[ "$FORCE_MODE" == "true" ]]; then
+    warn "FORCE_MODE active — all detected issues will be auto-repaired without prompting."
+  fi
+
   local issues=0
   local total_checks=0
 
@@ -1766,10 +1797,11 @@ cmd_doctor() {
         if [[ "$FORCE_MODE" == "true" ]]; then
           do_fix=true
         else
-          # Always prompt for repair in doctor mode unless forced
-          if ask_confirm "_DO_FIX" "    Issue found: $label. Attempt auto-repair?" "true"; then
-             [[ "$_DO_FIX" == "true" ]] && do_fix=true
-          fi
+          # Unset _DO_FIX before each call so ask_confirm always prompts fresh
+          # (avoids bleed-over from a prior iteration's value)
+          unset _DO_FIX
+          ask_confirm "_DO_FIX" "    Issue found: ${label}. Attempt auto-repair?" "false"
+          [[ "${_DO_FIX:-false}" == "true" ]] && do_fix=true
         fi
 
         if [[ "$do_fix" == "true" ]]; then
