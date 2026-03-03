@@ -33,7 +33,7 @@ set -uo pipefail   # -u: unbound vars = error, -o pipefail: pipe failures caught
 
 umask 077
 
-readonly DEVNET_VERSION="1.5.0"
+readonly DEVNET_VERSION="1.6.0"
 readonly DEVNET_NAME="devnet"
 readonly DEVNET_SCRIPT_URL="https://raw.githubusercontent.com/jinto-ag/sysadmin-scripts/main/devnet/setup.sh"
 DRY_RUN="false"
@@ -988,7 +988,7 @@ step_setup_tailscale() {
   sys_exec sudo pkill tailscaled 2>/dev/null || true
   if [[ "$DRY_RUN" != "true" ]]; then
     sleep 1
-    sudo mkdir -p /var/db/tailscale /var/run/tailscale
+    sudo mkdir -p /var/db/tailscale && sudo touch /var/run/tailscaled.socket 2>/dev/null || true
   fi
 
   file_tee "$PLIST_TS_DAEMON" > /dev/null <<PLIST
@@ -1004,7 +1004,7 @@ step_setup_tailscale() {
         <string>-state</string>
         <string>/var/db/tailscale/tailscaled.state</string>
         <string>-socket</string>
-        <string>/var/run/tailscale/tailscaled.sock</string>
+        <string>/var/run/tailscaled.socket</string>
         <string>-port</string>
         <string>41641</string>
     </array>
@@ -1028,23 +1028,85 @@ PLIST
   fi
   ok "tailscaled is running."
 
-  # ── Authenticate headlessly ───────────────────────────────
-  # --accept-dns=false: prevents any DNS override, guaranteed safe internet
-  # --accept-routes=false: don't accept subnet routes (not needed, safer)
-  # --ssh: enable Tailscale SSH for remote management (if enabled)
-  info "Authenticating with Tailscale (headless, no browser, no notifications)..."
-  local ts_up_args=(
-    --auth-key="${TAILSCALE_AUTHKEY}"
+  # ── Authenticate with Tailscale ────────────────────────────
+  # Strategy (per Tailscale docs):
+  #  1. If an auth key is present: headless auth via --auth-key (CI/pipe-safe)
+  #  2. If key is absent or invalid: run tailscale up interactively, capture
+  #     the authentication URL, open it in the browser if possible, and wait.
+  local ts_base_args=(
     --hostname="${TAILSCALE_HOSTNAME}"
     --accept-dns=false
     --accept-routes=false
     --reset
   )
-  [[ "$ENABLE_TAILSCALE_SSH" == "true" ]] && ts_up_args+=(--ssh)
+  [[ "$ENABLE_TAILSCALE_SSH" == "true" ]] && ts_base_args+=(--ssh)
 
-  sys_exec sudo tailscale up "${ts_up_args[@]}" \
-    || die "tailscale up failed.\n  Verify your auth key is Reusable + Pre-approved at:\n  https://login.tailscale.com/admin/settings/keys"
-  [[ "$DRY_RUN" != "true" ]] && sleep 5
+  local ts_authed=false
+
+  if [[ -n "${TAILSCALE_AUTHKEY:-}" ]]; then
+    info "Authenticating with Tailscale using auth key (headless)..."
+    if sudo tailscale up --auth-key="${TAILSCALE_AUTHKEY}" "${ts_base_args[@]}" 2>/dev/null; then
+      ts_authed=true
+    else
+      warn "Auth key authentication failed. Falling back to browser-based login..."
+    fi
+  fi
+
+  if [[ "$ts_authed" != "true" ]]; then
+    if [[ "$DRY_RUN" == "true" ]]; then
+      info "[DRY-RUN] Would perform interactive Tailscale authentication."
+      ts_authed=true
+    else
+      info "Starting interactive Tailscale authentication..."
+      info "A browser window will open. Sign in and approve this device."
+
+      # tailscale up outputs the auth URL on stdout when no key is provided.
+      # Capture it, print it, and attempt to open it in the default browser.
+      local ts_auth_output
+      ts_auth_output=$(sudo tailscale up "${ts_base_args[@]}" 2>&1 | tee /dev/stderr) || true
+
+      local ts_auth_url
+      ts_auth_url=$(echo "$ts_auth_output" | grep -oE "https://login.tailscale.com/a/[A-Za-z0-9]+" | head -1 || true)
+
+      if [[ -n "$ts_auth_url" ]]; then
+        echo ""
+        echo -e "  ${BOLD}${CYAN}Tailscale Authentication Required${NC}"
+        echo -e "  Open this URL to approve this device:"
+        echo -e "  ${GREEN}${ts_auth_url}${NC}"
+        echo ""
+
+        # Attempt to open in default browser (macOS)
+        if [[ -t 1 ]] && command -v open &>/dev/null; then
+          info "Opening browser for authentication..."
+          open "$ts_auth_url" 2>/dev/null || true
+        fi
+
+        # Wait for authentication to complete (up to 120 seconds)
+        info "Waiting for device approval (up to 120 seconds)..."
+        local i
+        for (( i=0; i<24; i++ )); do
+          sleep 5
+          if sudo tailscale status 2>/dev/null | grep -q "logged in"; then
+            ts_authed=true
+            break
+          fi
+          if tailscale ip -4 2>/dev/null | grep -qE "^100\."; then
+            ts_authed=true
+            break
+          fi
+        done
+      fi
+
+      if [[ "$ts_authed" != "true" ]]; then
+        die "Tailscale authentication did not complete.\n" \
+            "  Set TAILSCALE_AUTHKEY and retry, or visit:\n" \
+            "  https://login.tailscale.com/admin/settings/keys\n" \
+            "  (Create a key: Reusable + Pre-approved)"
+      fi
+    fi
+  fi
+
+  [[ "$DRY_RUN" != "true" ]] && sleep 3
 
   # ── Internet verification AFTER auth ─────────────────────
   info "Verifying internet is intact after Tailscale connection..."
@@ -1541,26 +1603,108 @@ step_install_cli() {
     return 0
   fi
 
-  # Acquire the script content:
-  # - When executing from a real file path (e.g. local download): copy directly.
-  # - When executing via pipe (curl | bash): BASH_SOURCE[0] is empty or 'bash';
+  # Acquire the script source:
+  # - Local file execution: copy BASH_SOURCE[0] directly.
+  # - Pipe execution (curl | bash): BASH_SOURCE[0] is empty or 'bash';
   #   download a canonical copy from the remote repository.
   local src="${BASH_SOURCE[0]:-}"
+  local tmp_src=""
+
   if [[ -f "$src" && "$src" != "-bash" && "$src" != "bash" ]]; then
-    cp "$src" "${DEVNET_CLI_PATH}"
+    tmp_src="$src"
   else
     info "Pipe execution detected — downloading canonical CLI binary..."
-    if ! curl -fsSL --max-time 60 "${DEVNET_SCRIPT_URL}" -o "${DEVNET_CLI_PATH}"; then
-      warn "CLI download failed. 'devnet' command will not be available."
-      warn "Retry manually: curl -fsSL ${DEVNET_SCRIPT_URL} -o ${DEVNET_CLI_PATH} && chmod 755 ${DEVNET_CLI_PATH}"
+    tmp_src=$(mktemp "/tmp/.devnet-cli-XXXXXX")
+    if ! curl -fsSL --max-time 60 "${DEVNET_SCRIPT_URL}" -o "$tmp_src"; then
+      rm -f "$tmp_src"
+      warn "CLI download failed — 'devnet' will not be available."
+      warn "Retry: curl -fsSL ${DEVNET_SCRIPT_URL} -o ${DEVNET_CLI_PATH} && chmod 755 ${DEVNET_CLI_PATH}"
+      return 0
+    fi
+    # Validate downloaded content before installing
+    if ! bash -n "$tmp_src" 2>/dev/null; then
+      rm -f "$tmp_src"
+      warn "Downloaded CLI binary failed syntax validation — skipping install."
       return 0
     fi
   fi
 
-  chmod 755 "${DEVNET_CLI_PATH}"
-  manifest_add "file" "${DEVNET_CLI_PATH}"
-  ok "devnet CLI installed: ${DEVNET_CLI_PATH}"
-  ok "The 'devnet' command is immediately available (${DEVNET_CLI_DIR} is in PATH)."
+  # Installation priority chain:
+  #   1. Direct copy (works when Homebrew bin is user-owned, standard on macOS)
+  #   2. sudo cp (fallback for environments where Homebrew bin is root-owned)
+  #   3. ~/.local/bin with automatic PATH injection into the detected shell config
+  local installed_path=""
+
+  _try_cli_install() {
+    local dst="$1"
+    local use_sudo="${2:-false}"
+    local dir
+    dir="$(dirname "$dst")"
+
+    if [[ "$use_sudo" == "true" ]]; then
+      sudo mkdir -p "$dir" 2>/dev/null || return 1
+      sudo cp "$tmp_src" "$dst" 2>/dev/null || return 1
+      sudo chmod 755 "$dst" 2>/dev/null || return 1
+    else
+      mkdir -p "$dir" 2>/dev/null || return 1
+      cp "$tmp_src" "$dst" 2>/dev/null || return 1
+      chmod 755 "$dst" 2>/dev/null || return 1
+    fi
+
+    # Verify the binary is accessible and executable
+    [[ -x "$dst" ]] || return 1
+    return 0
+  }
+
+  # Attempt 1: direct copy to Homebrew bin
+  if _try_cli_install "${DEVNET_CLI_PATH}" false; then
+    installed_path="${DEVNET_CLI_PATH}"
+  # Attempt 2: sudo copy to Homebrew bin
+  elif _try_cli_install "${DEVNET_CLI_PATH}" true; then
+    installed_path="${DEVNET_CLI_PATH}"
+  # Attempt 3: fallback to user-local bin
+  else
+    local fallback_dir="${HOME}/.local/bin"
+    local fallback_path="${fallback_dir}/devnet"
+    if _try_cli_install "${fallback_path}" false; then
+      installed_path="${fallback_path}"
+      warn "Could not install to ${DEVNET_CLI_DIR} — installed to ${fallback_path} instead."
+
+      # Automatically inject PATH into shell config if not already present
+      local shell_config
+      if [[ -f "${HOME}/.zshrc" ]]; then
+        shell_config="${HOME}/.zshrc"
+      elif [[ -f "${HOME}/.bash_profile" ]]; then
+        shell_config="${HOME}/.bash_profile"
+      else
+        shell_config="${HOME}/.profile"
+      fi
+      local path_line='export PATH="${HOME}/.local/bin:${PATH}"'
+      if ! printf ':%s:' "$PATH" | grep -q ":${fallback_dir}:" \
+         && ! grep -qF "$path_line" "$shell_config" 2>/dev/null; then
+        printf '\n# devnet CLI — added by devnet install\n%s\n' "$path_line" >> "$shell_config"
+        warn "Added PATH entry to ${shell_config}. Run: source ${shell_config}"
+      fi
+    fi
+  fi
+
+  # Cleanup temp file if used
+  [[ "$tmp_src" != "$src" ]] && rm -f "$tmp_src"
+
+  if [[ -z "$installed_path" ]]; then
+    warn "CLI installation failed at all target paths. Manual install:"
+    warn "  curl -fsSL ${DEVNET_SCRIPT_URL} -o /usr/local/bin/devnet && chmod 755 /usr/local/bin/devnet"
+    return 0
+  fi
+
+  manifest_add "file" "$installed_path"
+  ok "devnet CLI installed: ${installed_path}"
+
+  if printf ':%s:' "$PATH" | grep -q ":$(dirname "$installed_path"):"; then
+    ok "'devnet' command is immediately available in this session."
+  else
+    info "Open a new terminal or run: source ~/.*rc   to access 'devnet'."
+  fi
 }
 
 # ──────────────────────────────────────────────────────────────
@@ -1577,8 +1721,13 @@ OLLAMA_BIN="${OLLAMA_BIN}"
 ENABLE_SANDBOX="${ENABLE_SANDBOX}"
 IS_APPLE_SILICON="${IS_APPLE_SILICON}"
 GPU_MEMORY_PERCENT="${GPU_MEMORY_PERCENT}"
-PODMAN_MACHINE_NAME="${PODMAN_MACHINE_NAME}"
+OLLAMA_NUM_PARALLEL="${OLLAMA_NUM_PARALLEL}"
+OLLAMA_MAX_LOADED_MODELS="${OLLAMA_MAX_LOADED_MODELS}"
 INSTALL_PODMAN="${INSTALL_PODMAN}"
+PODMAN_MACHINE_NAME="${PODMAN_MACHINE_NAME}"
+PODMAN_CPUS="${PODMAN_CPUS}"
+PODMAN_MEMORY_MB="${PODMAN_MEMORY_MB}"
+PODMAN_DISK_GB="${PODMAN_DISK_GB}"
 BREW_PREFIX="${BREW_PREFIX}"
 INSTALL_DATE="$(date '+%F %T')"
 CFG
@@ -1675,6 +1824,7 @@ cmd_install() {
   ensure_gum
   phase_configure
   step_install_deps
+  step_install_cli
   step_harden_security
   step_setup_gpu_memory
   step_setup_tailscale
@@ -1685,7 +1835,6 @@ cmd_install() {
   step_setup_workspace
   step_setup_taildrive
   step_setup_firewall
-  step_install_cli
   save_config_snapshot
   print_summary
 }
