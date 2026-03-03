@@ -33,8 +33,9 @@ set -uo pipefail   # -u: unbound vars = error, -o pipefail: pipe failures caught
 
 umask 077
 
-readonly DEVNET_VERSION="1.2.0"
+readonly DEVNET_VERSION="1.4.0"
 readonly DEVNET_NAME="devnet"
+readonly DEVNET_SCRIPT_URL="https://raw.githubusercontent.com/jinto-ag/sysadmin-scripts/main/devnet/setup.sh"
 DRY_RUN="false"
 FORCE_MODE="false"
 
@@ -56,7 +57,7 @@ readonly MACOS_VER
 MACOS_MAJOR="$(echo "$MACOS_VER" | cut -d. -f1)"
 readonly MACOS_MAJOR
 
-# Paths (all scoped to current user — no global FS pollution)
+# Paths (all scoped to current user — no global filesystem pollution)
 readonly CONFIG_DIR="${HOME}/.config/${DEVNET_NAME}"
 readonly DATA_DIR="${HOME}/.local/share/${DEVNET_NAME}"
 readonly LOG_DIR="${HOME}/Library/Logs/${DEVNET_NAME}"
@@ -64,6 +65,8 @@ readonly MANIFEST="${CONFIG_DIR}/manifest"
 readonly CONFIG_SNAPSHOT="${CONFIG_DIR}/config.env"
 readonly SANDBOX_PROFILE="${DATA_DIR}/ollama.sb"
 readonly WRAPPER_DIR="${DATA_DIR}/wrappers"
+readonly DEVNET_CLI_DIR="${HOME}/.local/bin"
+readonly DEVNET_CLI_PATH="${DEVNET_CLI_DIR}/devnet"
 
 # LaunchAgent / LaunchDaemon identifiers
 readonly PLIST_TS_DAEMON="/Library/LaunchDaemons/com.${DEVNET_NAME}.tailscaled.plist"
@@ -704,8 +707,16 @@ step_harden_security() {
     info "[DRY-RUN] chmod 700 ${OLLAMA_HOME}"
     info "[DRY-RUN] chmod +a \"everyone deny...\" ${OLLAMA_HOME}"
   else
-    mkdir -p "${OLLAMA_HOME}/models" || die "Cannot create ${OLLAMA_HOME}"
+    # Recover from permission-denied (e.g. dir owned by root from Ollama.app install)
+    if ! mkdir -p "${OLLAMA_HOME}/models" 2>/dev/null; then
+      warn "Cannot create/access ${OLLAMA_HOME} — attempting chown fix (requires sudo)..."
+      sudo chown -R "${CURRENT_USER}" "${OLLAMA_HOME}" \
+        || die "Cannot create ${OLLAMA_HOME}. Fix manually: sudo chown -R $(whoami) ${OLLAMA_HOME}"
+      mkdir -p "${OLLAMA_HOME}/models" \
+        || die "Cannot create ${OLLAMA_HOME} even after chown"
+    fi
     chmod 700 "$OLLAMA_HOME" \
+      || { sudo chown -R "${CURRENT_USER}" "${OLLAMA_HOME}" && chmod 700 "$OLLAMA_HOME"; } \
       || die "Cannot chmod 700 ${OLLAMA_HOME}"
     chmod 700 "${OLLAMA_HOME}/models" 2>/dev/null || true
 
@@ -1440,6 +1451,56 @@ step_setup_firewall() {
 }
 
 # ──────────────────────────────────────────────────────────────
+# STEP: LOCAL CLI INSTALLATION
+# Installs the 'devnet' command to ~/.local/bin so the user can
+# manage the stack from any terminal session without the original URL.
+# ──────────────────────────────────────────────────────────────
+step_install_cli() {
+  step "CLI — Installing 'devnet' command to ${DEVNET_CLI_DIR}"
+
+  if [[ "$DRY_RUN" == "true" ]]; then
+    info "[DRY-RUN] Would install devnet CLI to: ${DEVNET_CLI_PATH}"
+    return 0
+  fi
+
+  mkdir -p "${DEVNET_CLI_DIR}"
+
+  # If running as a real file on disk, copy it directly; otherwise
+  # (e.g. piped via curl | bash) download a fresh canonical copy.
+  local src="${BASH_SOURCE[0]:-}"
+  if [[ -f "$src" && "$src" != "-bash" && "$src" != "bash" ]]; then
+    cp "$src" "${DEVNET_CLI_PATH}"
+  else
+    info "Downloading devnet CLI from remote repository (pipe execution mode)..."
+    if ! curl -fsSL --max-time 60 "${DEVNET_SCRIPT_URL}" -o "${DEVNET_CLI_PATH}"; then
+      warn "Could not download devnet CLI. The command will not be available until the next install."
+      return 0
+    fi
+  fi
+
+  chmod 755 "${DEVNET_CLI_PATH}"
+  manifest_add "file" "${DEVNET_CLI_PATH}"
+  ok "devnet CLI installed: ${DEVNET_CLI_PATH}"
+
+  # Advise if ~/.local/bin is not yet in PATH
+  local shell_config
+  if [[ -f "${HOME}/.zshrc" ]]; then
+    shell_config="${HOME}/.zshrc"
+  elif [[ -f "${HOME}/.bash_profile" ]]; then
+    shell_config="${HOME}/.bash_profile"
+  else
+    shell_config="${HOME}/.profile"
+  fi
+
+  if ! printf ':%s:' "$PATH" | grep -q ":${DEVNET_CLI_DIR}:"; then
+    warn "${DEVNET_CLI_DIR} is not in PATH."
+    warn "Add to ${shell_config}:"
+    warn '  export PATH="${HOME}/.local/bin:${PATH}"'
+    warn "Then reload: source ${shell_config}"
+  fi
+}
+
+# ──────────────────────────────────────────────────────────────
 # SAVE CONFIG SNAPSHOT
 # ──────────────────────────────────────────────────────────────
 save_config_snapshot() {
@@ -1513,15 +1574,13 @@ print_summary() {
 # CMD: INSTALL
 # ──────────────────────────────────────────────────────────────
 cmd_install() {
-  local idx=1
   while [[ $# -gt 0 ]]; do
-    if [[ "$1" == "--defaults" ]]; then
-      USE_DEFAULTS=true
-    elif [[ "$1" == "--dry-run" ]]; then
-      DRY_RUN=true
-    else
-      warn "Unknown flag: $1"
-    fi
+    case "$1" in
+      -f|--force)   FORCE_MODE=true ;;
+      --defaults)   USE_DEFAULTS=true ;;
+      --dry-run)    DRY_RUN=true ;;
+      *) warn "Unknown install flag: $1" ;;
+    esac
     shift
   done
 
@@ -1563,6 +1622,7 @@ cmd_install() {
   step_setup_workspace
   step_setup_taildrive
   step_setup_firewall
+  step_install_cli
   save_config_snapshot
   print_summary
 }
@@ -1597,6 +1657,12 @@ _run_uninstall() {
     launchd_unload_daemon "$plist" 2>/dev/null || true
     sudo rm -f "$plist"
   done < <(manifest_entries_of_type "launchdaemon" 2>/dev/null)
+
+  # Remove CLI binary
+  if [[ -f "$DEVNET_CLI_PATH" ]]; then
+    rm -f "$DEVNET_CLI_PATH"
+    info "Removed CLI binary: ${DEVNET_CLI_PATH}"
+  fi
 
   # Kill processes
   pkill -f "ollama serve" 2>/dev/null || true
@@ -1656,7 +1722,13 @@ _run_uninstall() {
 
 cmd_uninstall() {
   local PURGE=false
-  [[ "${1:-}" == "--purge" ]] && PURGE=true
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -f|--force)  FORCE_MODE=true ;;
+      --purge)     PURGE=true ;;
+    esac
+    shift
+  done
 
   echo -e "\n${BOLD}${RED}  setup.sh — Uninstall${NC}"
   [[ "$PURGE" == "true" ]] && warn "PURGE mode: logs and config will also be deleted."
@@ -1664,8 +1736,14 @@ cmd_uninstall() {
 
   [[ -f "$MANIFEST" ]] || { warn "No manifest found — nothing to uninstall."; exit 0; }
 
-  ask_confirm "_CONFIRM_UNINSTALL" "This will stop all devnet services. Continue?" "false"
-  [[ "${_CONFIRM_UNINSTALL:-false}" == "true" ]] || { info "Aborted."; exit 0; }
+  if [[ "$FORCE_MODE" == "true" ]]; then
+    warn "FORCE_MODE — skipping confirmation, proceeding with uninstall."
+  elif [[ ! -t 0 || ! -t 1 ]]; then
+    die "Uninstall requires interactive confirmation.\n  Run from a terminal, or use: setup.sh --force uninstall"
+  else
+    ask_confirm "_CONFIRM_UNINSTALL" "This will stop all devnet services. Continue?" "false"
+    [[ "${_CONFIRM_UNINSTALL:-false}" == "true" ]] || { info "Aborted."; exit 0; }
+  fi
 
   ensure_gum
   _run_uninstall "$PURGE"
@@ -1676,12 +1754,28 @@ cmd_uninstall() {
 # CMD: RESET
 # ──────────────────────────────────────────────────────────────
 cmd_reset() {
-  local use_defaults="${1:-}"
+  local install_args=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -f|--force)   FORCE_MODE=true ;;
+      --defaults)   USE_DEFAULTS=true; install_args+=("--defaults") ;;
+      --dry-run)    DRY_RUN=true; install_args+=("--dry-run") ;;
+      *) warn "Unknown reset flag: $1" ;;
+    esac
+    shift
+  done
+
   echo -e "\n${BOLD}${YELLOW}  setup.sh — Reset (uninstall + fresh install)${NC}\n"
   ensure_gum
 
-  ask_confirm "_CONFIRM_RESET" "This will uninstall then reinstall everything. Continue?" "false"
-  [[ "${_CONFIRM_RESET:-false}" == "true" ]] || { info "Aborted."; exit 0; }
+  if [[ "$FORCE_MODE" == "true" ]]; then
+    warn "FORCE_MODE — skipping confirmation, proceeding with full reset."
+  elif [[ ! -t 0 || ! -t 1 ]]; then
+    die "Reset requires interactive confirmation or --force flag.\n  Run: setup.sh --force reset --defaults"
+  else
+    ask_confirm "_CONFIRM_RESET" "This will uninstall then reinstall everything. Continue?" "false"
+    [[ "${_CONFIRM_RESET:-false}" == "true" ]] || { info "Aborted."; exit 0; }
+  fi
 
   if [[ -f "$MANIFEST" ]]; then
     _run_uninstall "false"
@@ -1689,7 +1783,93 @@ cmd_reset() {
     warn "No manifest — proceeding with clean install."
   fi
   sleep 2
-  cmd_install "$use_defaults"
+  cmd_install "${install_args[@]}"
+}
+
+# ──────────────────────────────────────────────────────────────
+# CMD: UPGRADE
+# Compares the installed version against the remote canonical version.
+# Downloads and atomically replaces the local CLI binary when a newer
+# version is available. Validates shell syntax before replacement.
+# ──────────────────────────────────────────────────────────────
+cmd_upgrade() {
+  local force_upgrade=false
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -f|--force) force_upgrade=true ;;
+      *) warn "Unknown upgrade flag: $1" ;;
+    esac
+    shift
+  done
+
+  step "Checking for Updates"
+
+  if [[ ! -f "$DEVNET_CLI_PATH" ]]; then
+    die "devnet CLI not found at ${DEVNET_CLI_PATH}.\n  Run the install command first to establish the local CLI."
+  fi
+
+  info "Fetching remote version from ${DEVNET_SCRIPT_URL}..."
+  local remote_version
+  remote_version=$(curl -fsSL --max-time 15 "${DEVNET_SCRIPT_URL}" \
+    | grep -m1 'readonly DEVNET_VERSION=' \
+    | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || true)
+
+  if [[ -z "$remote_version" ]]; then
+    die "Could not retrieve remote version.\n  Verify network connectivity and repository access."
+  fi
+
+  info "Installed: v${DEVNET_VERSION}  |  Remote: v${remote_version}"
+
+  # Inline semver comparison: returns 0 (true) if arg1 > arg2
+  _semver_gt() {
+    local IFS=.
+    local -a _v1 _v2
+    read -ra _v1 <<< "$1"
+    read -ra _v2 <<< "$2"
+    local _i
+    for (( _i=0; _i<3; _i++ )); do
+      if (( ${_v1[_i]:-0} > ${_v2[_i]:-0} )); then return 0; fi
+      if (( ${_v1[_i]:-0} < ${_v2[_i]:-0} )); then return 1; fi
+    done
+    return 1  # versions are equal
+  }
+
+  if ! _semver_gt "$remote_version" "$DEVNET_VERSION"; then
+    ok "devnet is current (v${DEVNET_VERSION}). No upgrade required."
+    return 0
+  fi
+
+  info "New version available: v${remote_version}"
+
+  if [[ "$force_upgrade" != "true" ]]; then
+    if [[ -t 0 && -t 1 ]]; then
+      unset _DO_UPGRADE
+      ask_confirm "_DO_UPGRADE" "Upgrade from v${DEVNET_VERSION} to v${remote_version}?" "true"
+      [[ "${_DO_UPGRADE:-false}" == "true" ]] || { info "Upgrade cancelled."; return 0; }
+    else
+      die "Upgrade requires explicit confirmation.\n  Run: devnet upgrade --force"
+    fi
+  fi
+
+  # Atomic replacement: write to a temporary path, verify syntax, then rename
+  local tmp_path
+  tmp_path=$(mktemp "/tmp/.devnet-upgrade-XXXXXX")
+
+  info "Downloading v${remote_version}..."
+  if ! curl -fsSL --max-time 60 "${DEVNET_SCRIPT_URL}" -o "$tmp_path"; then
+    rm -f "$tmp_path"
+    die "Download failed. Verify connectivity and retry."
+  fi
+
+  if ! bash -n "$tmp_path" 2>/dev/null; then
+    rm -f "$tmp_path"
+    die "Downloaded script failed syntax validation. Upgrade aborted — local binary is unchanged."
+  fi
+
+  chmod 755 "$tmp_path"
+  mv "$tmp_path" "${DEVNET_CLI_PATH}"
+  ok "devnet upgraded: v${DEVNET_VERSION} -> v${remote_version}."
+  info "Reload your shell or run 'devnet version' to confirm."
 }
 
 # ──────────────────────────────────────────────────────────────
@@ -1848,6 +2028,15 @@ for m in d.get('models', []):
 # CMD: DOCTOR (diagnose + auto-repair)
 # ──────────────────────────────────────────────────────────────
 cmd_doctor() {
+  # Accept -f/--force as a post-command flag too
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -f|--force) FORCE_MODE=true ;;
+      *) warn "Unknown doctor flag: $1" ;;
+    esac
+    shift
+  done
+
   if [[ -f "$CONFIG_SNAPSHOT" ]]; then
     # shellcheck source=/dev/null
     source "$CONFIG_SNAPSHOT" 2>/dev/null || true
@@ -2149,17 +2338,18 @@ main() {
   # Always create log dir first so logging never fails
   mkdir -p "$LOG_DIR" 2>/dev/null || true
 
-  # Parse global flags
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      -f|--force)  FORCE_MODE="true"; shift ;;
-      --dry-run)   DRY_RUN="true"; shift ;;
-      --defaults)  USE_DEFAULTS="true"; shift ;;
-      -*) # Assume it's a command-specific flag or stop at command
-          break ;;
-      *) break ;;
+  # Pre-scan ALL args for global flags (allows flags before OR after command)
+  local _raw_args=("$@")
+  local _pass_args=()
+  for _a in "${_raw_args[@]:-}"; do
+    case "$_a" in
+      -f|--force)   FORCE_MODE="true" ;;
+      --dry-run)    DRY_RUN="true" ;;
+      --defaults)   USE_DEFAULTS="true" ;;
+      *)            _pass_args+=("$_a") ;;
     esac
   done
+  set -- "${_pass_args[@]:-}"
 
   # Parse command
   local cmd="${1:-help}"
@@ -2168,6 +2358,7 @@ main() {
   case "$cmd" in
     install)    cmd_install   "$@" ;;
     uninstall)  ensure_gum; cmd_uninstall "$@" ;;
+    upgrade)    cmd_upgrade   "$@" ;;
     reset)      cmd_reset     "$@" ;;
     start)      cmd_start ;;
     stop)       cmd_stop ;;
