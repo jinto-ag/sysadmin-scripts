@@ -33,7 +33,7 @@ set -uo pipefail   # -u: unbound vars = error, -o pipefail: pipe failures caught
 
 umask 077
 
-readonly DEVNET_VERSION="1.4.0"
+readonly DEVNET_VERSION="1.5.0"
 readonly DEVNET_NAME="devnet"
 readonly DEVNET_SCRIPT_URL="https://raw.githubusercontent.com/jinto-ag/sysadmin-scripts/main/devnet/setup.sh"
 DRY_RUN="false"
@@ -65,7 +65,10 @@ readonly MANIFEST="${CONFIG_DIR}/manifest"
 readonly CONFIG_SNAPSHOT="${CONFIG_DIR}/config.env"
 readonly SANDBOX_PROFILE="${DATA_DIR}/ollama.sb"
 readonly WRAPPER_DIR="${DATA_DIR}/wrappers"
-readonly DEVNET_CLI_DIR="${HOME}/.local/bin"
+# CLI binary: installed to Homebrew bin so it is immediately on PATH
+# on all Homebrew macOS systems (Homebrew is a pre-install prerequisite).
+# Falls back to ~/.local/bin on non-Homebrew systems (rare).
+readonly DEVNET_CLI_DIR="${BREW_PREFIX}/bin"
 readonly DEVNET_CLI_PATH="${DEVNET_CLI_DIR}/devnet"
 
 # LaunchAgent / LaunchDaemon identifiers
@@ -83,18 +86,86 @@ ENABLE_TAILSCALE_SSH="${ENABLE_TAILSCALE_SSH:-true}"
 OLLAMA_PORT="${OLLAMA_PORT:-11434}"
 OLLAMA_HOME="${OLLAMA_HOME:-${HOME}/.ollama}"
 OLLAMA_ORIGINS="${OLLAMA_ORIGINS:-}"  # default set dynamically in phase_configure if empty
-OLLAMA_NUM_PARALLEL="${OLLAMA_NUM_PARALLEL:-4}"
-OLLAMA_MAX_LOADED_MODELS="${OLLAMA_MAX_LOADED_MODELS:-2}"
 OLLAMA_KEEP_ALIVE="${OLLAMA_KEEP_ALIVE:-30m}"
-GPU_MEMORY_PERCENT="${GPU_MEMORY_PERCENT:-80}"
 ENABLE_SANDBOX="${ENABLE_SANDBOX:-true}"
 PODMAN_MACHINE_NAME="${PODMAN_MACHINE_NAME:-devbox}"
-PODMAN_CPUS="${PODMAN_CPUS:-4}"
-PODMAN_MEMORY_MB="${PODMAN_MEMORY_MB:-6144}"
-PODMAN_DISK_GB="${PODMAN_DISK_GB:-40}"
 INSTALL_PODMAN="${INSTALL_PODMAN:-true}"
 INSTALL_OPENCODE="${INSTALL_OPENCODE:-true}"
 INSTALL_OPENCLAW="${INSTALL_OPENCLAW:-false}"
+
+# ──────────────────────────────────────────────────────────────
+# RESOURCE AUTO-TUNING
+# Derives optimal resource parameters from live system capacity.
+# All computed values honour environment-variable overrides, so
+# explicit exports (e.g. PODMAN_CPUS=8) always take precedence.
+# ──────────────────────────────────────────────────────────────
+compute_dynamic_defaults() {
+  # ── Physical CPU count ──────────────────────────────────────
+  local total_cpus
+  total_cpus=$(sysctl -n hw.logicalcpu 2>/dev/null || echo 4)
+
+  # ── Physical RAM (bytes → MB) ────────────────────────────────
+  local total_ram_bytes total_ram_mb
+  total_ram_bytes=$(sysctl -n hw.memsize 2>/dev/null || echo 0)
+  total_ram_mb=$(( total_ram_bytes / 1048576 ))
+  [[ $total_ram_mb -eq 0 ]] && total_ram_mb=8192   # safe fallback
+
+  # ── Free disk on home volume (GB) ────────────────────────────
+  local free_disk_gb
+  free_disk_gb=$(df -g "$HOME" 2>/dev/null | awk 'NR==2 {print $4}')
+  [[ -z "$free_disk_gb" || "$free_disk_gb" -eq 0 ]] && free_disk_gb=100
+
+  # ── GPU memory: 80 % of unified RAM (Apple Silicon) ──────────
+  # Kept at 80 % — the theoretical maximum before the OS reservation
+  # causes thrashing. Lowered to 70 % on machines with ≤ 8 GB RAM.
+  local _gpu_pct
+  if [[ $total_ram_mb -le 8192 ]]; then
+    _gpu_pct=70
+  else
+    _gpu_pct=80
+  fi
+  GPU_MEMORY_PERCENT="${GPU_MEMORY_PERCENT:-${_gpu_pct}}"
+
+  # ── Ollama parallel requests ─────────────────────────────────
+  # Rule: floor(total_cpus / 2), clamped to [2, 8].
+  local _parallel=$(( total_cpus / 2 ))
+  [[ $_parallel -lt 2 ]] && _parallel=2
+  [[ $_parallel -gt 8 ]] && _parallel=8
+  OLLAMA_NUM_PARALLEL="${OLLAMA_NUM_PARALLEL:-${_parallel}}"
+
+  # ── Ollama concurrently loaded models ────────────────────────
+  # Rule: 1 per 8 GB RAM, clamped to [1, 4].
+  local _models=$(( total_ram_mb / 8192 ))
+  [[ $_models -lt 1 ]] && _models=1
+  [[ $_models -gt 4 ]] && _models=4
+  OLLAMA_MAX_LOADED_MODELS="${OLLAMA_MAX_LOADED_MODELS:-${_models}}"
+
+  # ── Podman VM CPUs ────────────────────────────────────────────
+  # Rule: reserve 2 cores for the host, give the rest to Podman,
+  # clamped to [2, 12].
+  local _pod_cpus=$(( total_cpus - 2 ))
+  [[ $_pod_cpus -lt 2 ]] && _pod_cpus=2
+  [[ $_pod_cpus -gt 12 ]] && _pod_cpus=12
+  PODMAN_CPUS="${PODMAN_CPUS:-${_pod_cpus}}"
+
+  # ── Podman VM memory ──────────────────────────────────────────
+  # Rule: 25 % of total RAM, clamped to [2048 MB, 16384 MB].
+  local _pod_mem=$(( total_ram_mb / 4 ))
+  [[ $_pod_mem -lt 2048  ]] && _pod_mem=2048
+  [[ $_pod_mem -gt 16384 ]] && _pod_mem=16384
+  PODMAN_MEMORY_MB="${PODMAN_MEMORY_MB:-${_pod_mem}}"
+
+  # ── Podman VM disk ────────────────────────────────────────────
+  # Rule: 20 % of free disk, clamped to [20 GB, 100 GB].
+  local _pod_disk=$(( free_disk_gb / 5 ))
+  [[ $_pod_disk -lt 20  ]] && _pod_disk=20
+  [[ $_pod_disk -gt 100 ]] && _pod_disk=100
+  PODMAN_DISK_GB="${PODMAN_DISK_GB:-${_pod_disk}}"
+}
+
+# Compute defaults immediately; individual env-var overrides remain effective
+# because each variable uses the ${VAR:-computed_value} idiom above.
+compute_dynamic_defaults
 
 USE_DEFAULTS=false
 OLLAMA_BIN=""    # resolved during preflight
@@ -707,18 +778,25 @@ step_harden_security() {
     info "[DRY-RUN] chmod 700 ${OLLAMA_HOME}"
     info "[DRY-RUN] chmod +a \"everyone deny...\" ${OLLAMA_HOME}"
   else
-    # Recover from permission-denied (e.g. dir owned by root from Ollama.app install)
+    # Model directory may be absent (fresh system) or inaccessible (e.g. created
+    # by the Ollama.app GUI installer under a different ownership context).
+    # Strategy: attempt plain mkdir; on failure use privileged mkdir + chown.
     if ! mkdir -p "${OLLAMA_HOME}/models" 2>/dev/null; then
-      warn "Cannot create/access ${OLLAMA_HOME} — attempting chown fix (requires sudo)..."
-      sudo chown -R "${CURRENT_USER}" "${OLLAMA_HOME}" \
-        || die "Cannot create ${OLLAMA_HOME}. Fix manually: sudo chown -R $(whoami) ${OLLAMA_HOME}"
-      mkdir -p "${OLLAMA_HOME}/models" \
-        || die "Cannot create ${OLLAMA_HOME} even after chown"
+      warn "Cannot access ${OLLAMA_HOME} — performing privileged directory setup..."
+      # sudo mkdir first: handles the case where the dir does not yet exist
+      sudo mkdir -p "${OLLAMA_HOME}/models" \
+        || die "Cannot create ${OLLAMA_HOME} even with elevated privileges." \
+             "Manual fix: sudo mkdir -p ${OLLAMA_HOME}/models && sudo chown -R $(whoami):staff ${OLLAMA_HOME}"
+      # Return ownership to the current user
+      sudo chown -R "${CURRENT_USER}:staff" "${OLLAMA_HOME}" \
+        || die "Cannot take ownership of ${OLLAMA_HOME}." \
+             "Manual fix: sudo chown -R $(whoami):staff ${OLLAMA_HOME}"
+      ok "Ownership of ${OLLAMA_HOME} restored to ${CURRENT_USER}."
     fi
-    chmod 700 "$OLLAMA_HOME" \
-      || { sudo chown -R "${CURRENT_USER}" "${OLLAMA_HOME}" && chmod 700 "$OLLAMA_HOME"; } \
-      || die "Cannot chmod 700 ${OLLAMA_HOME}"
-    chmod 700 "${OLLAMA_HOME}/models" 2>/dev/null || true
+    # Restrict permissions: owner read/write/execute only
+    sudo chmod 700 "${OLLAMA_HOME}" 2>/dev/null || chmod 700 "${OLLAMA_HOME}" \
+      || die "Cannot set permissions on ${OLLAMA_HOME}"
+    sudo chmod 700 "${OLLAMA_HOME}/models" 2>/dev/null || true
 
     # macOS ACL: explicitly deny all other users/processes
     if chmod +a "everyone deny read,write,execute,delete,append,\
@@ -1456,24 +1534,25 @@ step_setup_firewall() {
 # manage the stack from any terminal session without the original URL.
 # ──────────────────────────────────────────────────────────────
 step_install_cli() {
-  step "CLI — Installing 'devnet' command to ${DEVNET_CLI_DIR}"
+  step "CLI — Installing 'devnet' command"
 
   if [[ "$DRY_RUN" == "true" ]]; then
     info "[DRY-RUN] Would install devnet CLI to: ${DEVNET_CLI_PATH}"
     return 0
   fi
 
-  mkdir -p "${DEVNET_CLI_DIR}"
-
-  # If running as a real file on disk, copy it directly; otherwise
-  # (e.g. piped via curl | bash) download a fresh canonical copy.
+  # Acquire the script content:
+  # - When executing from a real file path (e.g. local download): copy directly.
+  # - When executing via pipe (curl | bash): BASH_SOURCE[0] is empty or 'bash';
+  #   download a canonical copy from the remote repository.
   local src="${BASH_SOURCE[0]:-}"
   if [[ -f "$src" && "$src" != "-bash" && "$src" != "bash" ]]; then
     cp "$src" "${DEVNET_CLI_PATH}"
   else
-    info "Downloading devnet CLI from remote repository (pipe execution mode)..."
+    info "Pipe execution detected — downloading canonical CLI binary..."
     if ! curl -fsSL --max-time 60 "${DEVNET_SCRIPT_URL}" -o "${DEVNET_CLI_PATH}"; then
-      warn "Could not download devnet CLI. The command will not be available until the next install."
+      warn "CLI download failed. 'devnet' command will not be available."
+      warn "Retry manually: curl -fsSL ${DEVNET_SCRIPT_URL} -o ${DEVNET_CLI_PATH} && chmod 755 ${DEVNET_CLI_PATH}"
       return 0
     fi
   fi
@@ -1481,23 +1560,7 @@ step_install_cli() {
   chmod 755 "${DEVNET_CLI_PATH}"
   manifest_add "file" "${DEVNET_CLI_PATH}"
   ok "devnet CLI installed: ${DEVNET_CLI_PATH}"
-
-  # Advise if ~/.local/bin is not yet in PATH
-  local shell_config
-  if [[ -f "${HOME}/.zshrc" ]]; then
-    shell_config="${HOME}/.zshrc"
-  elif [[ -f "${HOME}/.bash_profile" ]]; then
-    shell_config="${HOME}/.bash_profile"
-  else
-    shell_config="${HOME}/.profile"
-  fi
-
-  if ! printf ':%s:' "$PATH" | grep -q ":${DEVNET_CLI_DIR}:"; then
-    warn "${DEVNET_CLI_DIR} is not in PATH."
-    warn "Add to ${shell_config}:"
-    warn '  export PATH="${HOME}/.local/bin:${PATH}"'
-    warn "Then reload: source ${shell_config}"
-  fi
+  ok "The 'devnet' command is immediately available (${DEVNET_CLI_DIR} is in PATH)."
 }
 
 # ──────────────────────────────────────────────────────────────
