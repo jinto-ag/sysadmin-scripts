@@ -18,8 +18,7 @@ jobs:
 
       - name: Run shellcheck
         run: |
-          # Only fail on errors, not informational warnings (SC2015, SC2016, etc.)
-          find . -name "*.sh" -print0 | xargs -0 -I {} shellcheck -x -S error {}
+          find . -name "*.sh" -print0 | xargs -0 -I {} shellcheck -x {}
           
       - name: Bash syntax check
         run: |

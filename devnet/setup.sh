@@ -33,7 +33,7 @@ set -uo pipefail   # -u: unbound vars = error, -o pipefail: pipe failures caught
 
 umask 077
 
-readonly DEVNET_VERSION="1.6.0"
+readonly DEVNET_VERSION="1.0.0"
 readonly DEVNET_NAME="devnet"
 readonly DEVNET_SCRIPT_URL="https://raw.githubusercontent.com/jinto-ag/sysadmin-scripts/main/devnet/setup.sh"
 DRY_RUN="false"
@@ -218,7 +218,9 @@ launchd_load_daemon() {
   fi
   # Idempotent: bootout any existing instance first
   local label; label=$(_plist_label "$plist")
-  [[ -n "$label" ]] && sudo launchctl bootout "system/${label}" 2>/dev/null || true
+  if [[ -n "$label" ]]; then
+    sudo launchctl bootout "system/${label}" 2>/dev/null || true
+  fi
   # Try modern bootstrap (macOS 13+), fall back to legacy load
   if ! sudo launchctl bootstrap system "$plist" 2>/dev/null; then
     sudo launchctl load -w "$plist" 2>/dev/null
@@ -244,7 +246,9 @@ launchd_load_agent() {
   fi
   local uid; uid=$(id -u)
   local label; label=$(_plist_label "$plist")
-  [[ -n "$label" ]] && launchctl bootout "gui/${uid}/${label}" 2>/dev/null || true
+  if [[ -n "$label" ]]; then
+    launchctl bootout "gui/${uid}/${label}" 2>/dev/null || true
+  fi
   if ! launchctl bootstrap "gui/${uid}" "$plist" 2>/dev/null; then
     launchctl load -w "$plist" 2>/dev/null
   fi
@@ -574,13 +578,17 @@ phase_validate() {
       ollama_pids=$(lsof -t -iTCP:"${OLLAMA_PORT}" -sTCP:LISTEN 2>/dev/null || true)
       if [[ -n "$ollama_pids" ]]; then
         while IFS= read -r pid; do
-          [[ -n "$pid" ]] && kill    "$pid" 2>/dev/null || true
+          if [[ -n "$pid" ]]; then
+            kill    "$pid" 2>/dev/null || true
+          fi
         done <<< "$ollama_pids"
         sleep 1
         # SIGKILL stragglers
         ollama_pids=$(lsof -t -iTCP:"${OLLAMA_PORT}" -sTCP:LISTEN 2>/dev/null || true)
         while IFS= read -r pid; do
-          [[ -n "$pid" ]] && kill -9 "$pid" 2>/dev/null || true
+          if [[ -n "$pid" ]]; then
+            kill -9 "$pid" 2>/dev/null || true
+          fi
         done <<< "$ollama_pids"
       fi
       # Step 3: poll up to 10 seconds for the port to clear
@@ -1016,7 +1024,10 @@ step_setup_tailscale() {
   sys_exec sudo pkill tailscaled 2>/dev/null || true
   if [[ "$DRY_RUN" != "true" ]]; then
     sleep 1
-    sudo mkdir -p /var/db/tailscale && sudo touch /var/run/tailscaled.socket 2>/dev/null || true
+    if ! sudo mkdir -p /var/db/tailscale 2>/dev/null; then
+      sudo mkdir -p /var/db/tailscale 2>/dev/null || true
+    fi
+    sudo touch /var/run/tailscaled.socket 2>/dev/null || true
   fi
 
   file_tee "$PLIST_TS_DAEMON" > /dev/null <<PLIST
@@ -1077,7 +1088,9 @@ PLIST
     info "Tailscale already authenticated — applying settings without re-auth..."
     # Apply settings (hostname, SSH, DNS) without re-authenticating
     sudo tailscale set --hostname="${TAILSCALE_HOSTNAME}" --accept-dns=false 2>/dev/null || true
-    [[ "$ENABLE_TAILSCALE_SSH" == "true" ]] && sudo tailscale set --ssh 2>/dev/null || true
+    if [[ "$ENABLE_TAILSCALE_SSH" == "true" ]]; then
+      sudo tailscale set --ssh 2>/dev/null || true
+    fi
     ts_authed=true
   elif [[ -n "${TAILSCALE_AUTHKEY:-}" ]]; then
     info "Authenticating with Tailscale using auth key (headless)..."
@@ -1716,7 +1729,8 @@ step_install_cli() {
       else
         shell_config="${HOME}/.profile"
       fi
-      local path_line='export PATH="${HOME}/.local/bin:${PATH}"'
+      local path_line
+      path_line="export PATH=\"${HOME}/.local/bin:\${PATH}\""
       if ! printf ':%s:' "$PATH" | grep -q ":${fallback_dir}:" \
          && ! grep -qF "$path_line" "$shell_config" 2>/dev/null; then
         printf '\n# devnet CLI — added by devnet install\n%s\n' "$path_line" >> "$shell_config"

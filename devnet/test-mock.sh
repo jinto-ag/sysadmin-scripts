@@ -143,9 +143,9 @@ fi
 # ────────────────────────────────────────────────────────────
 section "Container Test Pipeline"
 
-CONTAINER_SCRIPT='
+CONTAINER_SCRIPT=$'
 set -euo pipefail
-GREEN='"'"'\033[0;32m'"'"'; RED='"'"'\033[0;31m'"'"'; CYAN='"'"'\033[0;36m'"'"'; NC='"'"'\033[0m'"'"'
+GREEN=\'\033[0;32m\'; RED=\'\033[0;31m\'; CYAN=\'\033[0;36m\'; NC=\'\033[0m\''
 pass() { echo -e "   ${GREEN}✓${NC} $*"; }
 fail() { echo -e "   ${RED}✗${NC} $*"; exit 1; }
 assert_contains() { echo "$1" | grep -qF "$2" || fail "Expected \"$2\" in output"; }
@@ -175,7 +175,7 @@ done
 assert_file_executable "$DEVNET_BIN"
 pass "devnet CLI installed and executable: $DEVNET_BIN"
 
-$DEVNET_BIN version 2>&1 | grep -q "1.6.0" || fail "devnet CLI version does not report 1.6.0"
+$DEVNET_BIN version 2>&1 | grep -q "1.0.0" || fail "devnet CLI version does not report 1.0.0"
 pass "devnet CLI version check via installed binary"
 
 # ── Assert: tailscaled plist uses the canonical socket path ──────────────────
@@ -219,8 +219,8 @@ pass "test suite"
 echo -e "\n━━ version"
 VER=$(./setup.sh version | head -1)
 echo "   Version: $VER"
-[[ "$VER" == *"1.6.0"* ]] || fail "expected v1.6.0, got: $VER"
-pass "version = 1.6.0"
+[[ "$VER" == *"1.0.0"* ]] || fail "expected v1.0.0, got: $VER"
+pass "version = 1.0.0"
 
 echo -e "\n━━ upgrade command (no-op: already current)"
 # Run upgrade in force mode — since remote is the same version, should report up-to-date
