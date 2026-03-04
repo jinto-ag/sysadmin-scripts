@@ -143,9 +143,9 @@ fi
 # ────────────────────────────────────────────────────────────
 section "Container Test Pipeline"
 
-CONTAINER_SCRIPT=$'
+CONTAINER_SCRIPT='
 set -euo pipefail
-GREEN=\'\033[0;32m\'; RED=\'\033[0;31m\'; CYAN=\'\033[0;36m\'; NC=\'\033[0m\''
+GREEN='"'"'\033[0;32m'"'"'; RED='"'"'\033[0;31m'"'"'; CYAN='"'"'\033[0;36m'"'"'; NC='"'"'\033[0m'"'"'
 pass() { echo -e "   ${GREEN}✓${NC} $*"; }
 fail() { echo -e "   ${RED}✗${NC} $*"; exit 1; }
 assert_contains() { echo "$1" | grep -qF "$2" || fail "Expected \"$2\" in output"; }
