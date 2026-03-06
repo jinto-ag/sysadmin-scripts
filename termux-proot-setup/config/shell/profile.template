@@ -1,0 +1,20 @@
+# ~/.profile: executed by Bourne-compatible login shells.
+
+if [ "$BASH" ]; then
+  if [ -f ~/.bashrc ]; then
+    . ~/.bashrc
+  fi
+fi
+
+. "$HOME/.local/bin/env"
+
+# Picoclaw Ollama tunnel autostart (only when NOT in tmux)
+if [ -z "$PICOCLAW_OLLAMA_STARTED" ] && [ -z "$TMUX" ]; then
+  export PICOCLAW_OLLAMA_STARTED=1
+  if [ -x "$HOME/.picoclaw/scripts/picoclaw-autostart.sh" ]; then
+    # Check if already running before starting
+    if ! "$HOME/.picoclaw/scripts/picoclaw-autostart.sh" status 2>/dev/null | grep -q "running"; then
+      "$HOME/.picoclaw/scripts/picoclaw-autostart.sh" start &
+    fi
+  fi
+fi

@@ -1,0 +1,34 @@
+# Secrets - NEVER commit these
+*.key
+*.pem
+*.crt
+*.pub
+*.secret
+*.token
+*.env
+.env.local
+
+# SSH keys
+id_rsa*
+id_ed25519*
+known_hosts
+authorized_keys
+
+# API Keys
+credentials.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Logs
+*.log
+
+# Backups
+*.bak
+*.backup

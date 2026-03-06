@@ -1,0 +1,273 @@
+# ═══════════════════════════════════════════════════════════════
+# Termux proot Debian — Optimized .zshrc
+# Optimized for: 3.5GB RAM, aarch64, mobile use
+# ═══════════════════════════════════════════════════════════════
+
+# ── Powerlevel10k instant prompt (MUST stay at top) ──────────
+if [[ -r "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh" ]]; then
+  source "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh"
+fi
+
+# ── PATH (deduplicated) ──────────────────────────────────────
+typeset -U PATH
+export PATH="$HOME/.bun/bin:$HOME/.nvm/versions/node/v24.13.1/bin:$HOME/.opencode/bin:$HOME/.local/bin:$PATH"
+
+# ── Oh My Zsh ────────────────────────────────────────────────
+export ZSH="$HOME/.oh-my-zsh"
+ZSH_THEME="powerlevel10k/powerlevel10k"
+zstyle ':omz:update' mode reminder
+DISABLE_UNTRACKED_FILES_DIRTY="true"
+
+plugins=(
+  git
+  sudo
+  copypath
+  dirhistory
+  history
+  colored-man-pages
+  zsh-autosuggestions
+  fast-syntax-highlighting
+)
+source $ZSH/oh-my-zsh.sh
+
+# ── Completion performance ───────────────────────────────────
+zstyle ':completion:*' use-cache on
+zstyle ':completion:*' cache-path ~/.cache/zsh-completion
+
+# ── Editor ───────────────────────────────────────────────────
+export EDITOR="hx"
+export VISUAL="hx"
+
+# ── Build performance ─────────────────────────────────────────
+export MAKEFLAGS="-j4"
+export NODE_OPTIONS="--max-old-space-size=512"
+
+# ── NVM (lazy load) ───────────────────────────────────────────
+export NVM_DIR="$HOME/.nvm"
+nvm() {
+    unset -f nvm node npm npx
+    [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+    [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"
+    nvm "$@"
+}
+node() { unset -f node; [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"; node "$@"; }
+npm()  { unset -f npm;  [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"; npm "$@";  }
+npx()  { unset -f npx;  [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"; npx "$@";  }
+
+# ── Bun ───────────────────────────────────────────────────────
+export BUN_INSTALL="$HOME/.bun"
+
+# ═══════════════════════════════════════════════════════════════
+# ALIASES
+# ═══════════════════════════════════════════════════════════════
+
+# ── File Navigation ──────────────────────────────────────────
+alias ls="lsd"
+alias ll="lsd -la"
+alias lt="lsd --tree --depth 2"
+alias ..="cd .."
+alias ...="cd ../.."
+
+# ── Config Editing ────────────────────────────────────────────
+alias zshrc="hx ~/.zshrc"
+alias refresh="source ~/.zshrc"
+
+# ── Termux / Debian ───────────────────────────────────────────
+alias upgrade="pkg upgrade -y"
+alias debian='proot-distro login debian --user root --shared-tmp --termux-home'
+
+# ── Tmux Sessions ─────────────────────────────────────────────
+alias dev='tmux has-session -t dev 2>/dev/null && tmux attach-session -t dev || tmux new-session -s dev'
+alias dev-stop='tmux kill-session -t dev 2>/dev/null && echo "dev session stopped" || echo "no dev session running"'
+
+# ── Remote Connections ─────────────────────────────────────────
+alias pcsession="busybox telnetd -b 127.0.0.1:8023 -F &"
+alias macconnect="ssh nikhilsutra@100.69.90.87"
+
+# ── OpenCode ─────────────────────────────────────────────────
+alias oc='opencode'
+alias opencode-config="hx ~/.config/opencode"
+
+# ── Bun ──────────────────────────────────────────────────────
+alias bun="grun $HOME/.bun/bin/bun"
+alias bunx="grun $HOME/.bun/bin/bunx"
+
+# ── Safety ──────────────────────────────────────────────────
+alias rm='rm -i'
+alias cp='cp -i'
+alias mv='mv -i'
+
+# ── Utilities ────────────────────────────────────────────────
+alias grep='grep --color=auto'
+alias h='history'
+alias ports='ss -tulanp'
+alias mem='free -h'
+alias disk='df -h /'
+
+# ── bat (installed as batcat on Debian) ───────────────────────
+alias bat='batcat'
+alias cat='batcat --paging=never'
+
+# ═══════════════════════════════════════════════════════════════
+# OPTIONAL TOOLS
+# ═══════════════════════════════════════════════════════════════
+
+# ── FZF ──────────────────────────────────────────────────────
+if command -v fzf &>/dev/null; then
+  if command -v fdfind &>/dev/null; then
+    export FZF_DEFAULT_COMMAND='fdfind --type f --hidden --follow --exclude .git'
+    export FZF_CTRL_T_COMMAND="$FZF_DEFAULT_COMMAND"
+    export FZF_ALT_C_COMMAND='fdfind --type d --hidden --follow --exclude .git'
+  fi
+  export FZF_DEFAULT_OPTS='--height 40% --layout=reverse --border --info=inline'
+fi
+
+# ── Zoxide ────────────────────────────────────────────────────
+if command -v zoxide &>/dev/null; then
+  eval "$(zoxide init zsh)"
+fi
+
+# ═══════════════════════════════════════════════════════════════
+# SHELL CONFIG
+# ═══════════════════════════════════════════════════════════════
+
+# ── Powerlevel10k ────────────────────────────────────────────
+[[ ! -f ~/.p10k.zsh ]] || source ~/.p10k.zsh
+
+# ── pipx / uv env ────────────────────────────────────────────
+[[ -f "$HOME/.local/bin/env" ]] && . "$HOME/.local/bin/env"
+
+# ── Branded paste ────────────────────────────────────────────
+autoload -Uz bracketed-paste-magic
+zle -N bracketed-paste bracketed-paste-magic
+
+# ═══════════════════════════════════════════════════════════════
+# TMUX SESSIONS
+# ═══════════════════════════════════════════════════════════════
+
+# Full aliases
+alias dev-session='tmux attach -t dev'
+alias pc-session='tmux attach -t pc'
+alias mac-session='tmux attach -t mac'
+alias debian-session='tmux attach -t debian'
+alias codespace-session='tmux attach -t codespace'
+alias opencode-session='tmux attach -t opencode'
+
+# Short aliases
+alias tmd='tmux attach -t dev'
+alias tmpc='tmux attach -t pc'
+alias tmmac='tmux attach -t mac'
+alias tmdb='tmux attach -t debian'
+alias tmc='tmux attach -t codespace'
+alias tmo='tmux attach -t opencode'
+
+# ═══════════════════════════════════════════════════════════════
+# GITHUB CODESPACE
+# ═══════════════════════════════════════════════════════════════
+
+# Aliases
+alias cs-list='gh cs list'
+alias cs-logs='gh cs logs -c glorious-space-fiesta-766j5pwrwgr2r66r'
+
+# Help function
+cs-help() {
+    cat << 'EOF'
+GitHub Codespace Helper for Auto Trader Pro
+
+Usage:
+  cs              Connect to codespace (interactive shell)
+  cs <command>    Run command in codespace
+  cs-list         List all codespaces
+  cs-logs         View codespace logs
+  cs-help         Show this help
+
+Examples:
+  cs pytest                           # Run pytest
+  cs "git pull origin main"           # Git pull
+  cs "ls -la /workspaces/auto_trader_pro"  # List files
+
+Codespace: glorious-space-fiesta-766j5pwrwgr2r66r
+EOF
+}
+
+# Connect to codespace
+cs() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        cs-help
+        return
+    fi
+    
+    if [[ -n "$1" ]]; then
+        gh cs ssh -c glorious-space-fiesta-766j5pwrwgr2r66r -- "cd /workspaces/auto_trader_pro && $*"
+    else
+        gh cs ssh -c glorious-space-fiesta-766j5pwrwgr2r66r
+    fi
+}
+
+# ═══════════════════════════════════════════════════════════════
+# OPENCODE COMPLETIONS
+# ═══════════════════════════════════════════════════════════════
+
+###-begin-opencode-completions-###
+_opencode_yargs_completions() {
+    local cur_word args type_list
+    cur_word="${COMP_WORDS[COMP_CWORD]}"
+    args=("${COMP_WORDS[@]}")
+    mapfile -t type_list < <(opencode --get-yargs-completions "${args[@]}")
+    mapfile -t COMPREPLY < <(compgen -W "$( printf '%q ' "${type_list[@]}" )" -- "${cur_word}" |
+        awk '/ / { print "\""$0"\"" } /^[^ ]+$/ { print $0 }')
+    [ ${#COMPREPLY[@]} -eq 0 ] && COMPREPLY=()
+    return 0
+}
+complete -o bashdefault -o default -F _opencode_yargs_completions opencode
+###-end-opencode-completions-###
+
+# ── Picoclaw Remote Ollama Tunnel Autostart ───────────────────
+export PICOCLAW_OLLAMA_HOST="100.69.90.87"
+export PICOCLAW_OLLAMA_USER="nikhilsutra"
+export PICOCLAW_OLLAMA_LOCAL_PORT="11434"
+export PICOCLAW_OLLAMA_REMOTE_PORT="11434"
+
+alias picoclaw-ollama-up="$HOME/.picoclaw/scripts/picoclaw-ollama-supervisor.sh start"
+alias picoclaw-ollama-down="$HOME/.picoclaw/scripts/picoclaw-ollama-supervisor.sh stop"
+alias picoclaw-ollama-status="$HOME/.picoclaw/scripts/picoclaw-ollama-supervisor.sh status"
+alias picoclaw-ollama-logs="$HOME/.picoclaw/scripts/picoclaw-ollama-supervisor.sh logs"
+
+# Picoclaw Ollama model switching
+alias picoclaw-ollama-models='ssh -o BatchMode=yes nikhilsutra@100.69.90.87 "ollama list"'
+alias picoclaw-ollama-use='$HOME/.picoclaw/scripts/picoclaw-use-ollama-model.sh'
+alias picoclaw-ollama-qwen2b='$HOME/.picoclaw/scripts/picoclaw-use-ollama-model.sh qwen3.5:2b'
+alias picoclaw-ollama-qwen9b='$HOME/.picoclaw/scripts/picoclaw-use-ollama-model.sh qwen3.5:9b'
+alias picoclaw-ollama-qwen9b64k='$HOME/.picoclaw/scripts/picoclaw-use-ollama-model.sh qwen3.5:9b-ctx64k'
+alias picoclaw-ollama-qwen27b='$HOME/.picoclaw/scripts/picoclaw-use-ollama-model.sh qwen3.5:27b'
+alias pcola-use='$HOME/.picoclaw/scripts/picoclaw-use-ollama-model.sh'
+alias pcola-qwen2b='$HOME/.picoclaw/scripts/picoclaw-use-ollama-model.sh qwen3.5:2b'
+alias pcola-qwen9b='$HOME/.picoclaw/scripts/picoclaw-use-ollama-model.sh qwen3.5:9b'
+alias pcola-qwen9b64k='$HOME/.picoclaw/scripts/picoclaw-use-ollama-model.sh qwen3.5:9b-ctx64k'
+alias pcola-qwen27b='$HOME/.picoclaw/scripts/picoclaw-use-ollama-model.sh qwen3.5:27b'
+
+# TMUX Session Management
+alias tmux-start='tmux start-server; tmux new-session -d -s main 2>/dev/null; tmux ls'
+alias tmux-restart='tmux kill-server 2>/dev/null; tmux start-server; sleep 1; tmux new-session -d -s main; echo "TMUX restarted"'
+alias tmux-ls='tmux ls'
+alias tmux-attach='tmux attach || tmux new-session'
+alias tmux-sessions='~/.termux/boot/tmux-sessions.sh list'
+
+# ═══════════════════════════════════════════════════════════════
+# TMUX Session Launcher (with retry & logging)
+# ═══════════════════════════════════════════════════════════════
+LAUNCHER="$HOME/.tmux/session-launcher.sh"
+
+alias tmux-launch='$LAUNCHER'
+alias tmux-all='$LAUNCHER all'
+alias tmux-status='$LAUNCHER status'
+
+# Quick session shortcuts (attach or launch with retry)
+alias t-main='tmux attach -t main 2>/dev/null || $LAUNCHER main && tmux attach -t main'
+alias t-mac='tmux attach -t mac 2>/dev/null || ($LAUNCHER mac && tmux attach -t mac)'
+alias t-pc='tmux attach -t pc 2>/dev/null || ($LAUNCHER pc && tmux attach -t pc)'
+alias t-debian='tmux attach -t debian 2>/dev/null || ($LAUNCHER dev && tmux attach -t dev)'
+alias t-dev='tmux attach -t dev 2>/dev/null || ($LAUNCHER dev && tmux attach -t dev)'
+alias t-picoclaw='tmux attach -t picoclaw 2>/dev/null || ($LAUNCHER picoclaw && tmux attach -t picoclaw)'
+alias t-opencode='tmux attach -t opencode 2>/dev/null || ($LAUNCHER opencode && tmux attach -t opencode)'
+alias t-codex='tmux attach -t codespace 2>/dev/null || ($LAUNCHER codex && tmux attach -t codespace)'
