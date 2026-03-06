@@ -1,32 +1,32 @@
 ---
-name: Bug report
+name: Bug Report
 about: Create a report to help us improve
-title: ""
+title: 'fix: '
 labels: bug
-assignees: ""
+assignees: ''
 ---
 
-**Describe the bug**
-A clear and concise description of what the bug is.
+## Description
+<!-- A clear and concise description of what the bug is -->
 
-**To Reproduce**
-Steps to reproduce the behavior:
+## Steps to Reproduce
+<!-- Steps to reproduce the behavior -->
+1. 
+2. 
+3. 
 
-1. Run script '...'
-2. With arguments '....'
-3. See error
+## Expected Behavior
+<!-- What you expected to happen -->
 
-**Expected behavior**
-A clear and concise description of what you expected to happen.
+## Actual Behavior
+<!-- What actually happened -->
 
-**Screenshots/Terminal Output**
-If applicable, add screenshots or terminal output to help explain your problem.
+## Environment
+- OS: 
+- Version: 
 
-**Environment (please complete the following information):**
+## Screenshots
+<!-- If applicable, add screenshots to explain the problem -->
 
-- OS: [e.g. macOS, Ubuntu]
-- Version [e.g. 14.5, 24.04]
-- Shell [e.g. zsh, bash]
-
-**Additional context**
-Add any other context about the problem here.
+## Additional Context
+<!-- Add any other context about the problem here -->

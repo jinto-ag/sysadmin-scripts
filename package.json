@@ -1,0 +1,31 @@
+{
+  "name": "sysadmin-scripts",
+  "version": "1.0.0",
+  "description": "Enterprise-grade system administration scripts",
+  "scripts": {
+    "release": "standard-version",
+    "release:minor": "standard-version --release-as minor",
+    "release:major": "standard-version --release-as major",
+    "release:patch": "standard-version --release-as patch",
+    "commitlint": "commitlint --edit",
+    "prepare": "if [ -d .git ]; then npx husky install || true; fi"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jinto-ag/sysadmin-scripts.git"
+  },
+  "keywords": [
+    "sysadmin",
+    "devnet",
+    "termux",
+    "scripts"
+  ],
+  "author": "Jinto AG",
+  "license": "MIT",
+  "devDependencies": {
+    "@commitlint/cli": "^19.0.0",
+    "@commitlint/config-conventional": "^19.0.0",
+    "husky": "^9.0.0",
+    "standard-version": "^9.3.0"
+  }
+}
