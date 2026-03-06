@@ -94,7 +94,8 @@ check_dependencies() {
 #===============================================================================
 
 backup() {
-    local timestamp=$(date +%Y%m%d_%H%M%S)
+    timestamp=$(date +%Y%m%d_%H%M%S)
+    local timestamp
     local backup_path="${BACKUP_DIR}/backup_${timestamp}"
     
     info "Creating backup at: $backup_path"
@@ -137,9 +138,11 @@ restore() {
     info "Restoring from: $archive"
     
     # Extract to temp
-    local temp_dir=$(mktemp -d)
+    temp_dir=$(mktemp -d)
+    local temp_dir
     tar -xzf "$archive" -C "$temp_dir"
-    local backup_path=$(find "$temp_dir" -mindepth 1 -maxdepth 1 -type d | head -1)
+    backup_path=$(find "$temp_dir"
+    local backup_path -mindepth 1 -maxdepth 1 -type d | head -1)
     
     if [ -z "$backup_path" ]; then
         error "Invalid backup archive"
@@ -456,7 +459,7 @@ interactive_setup() {
             T|t)
                 run_tests
                 echo -en "\nPress Enter to continue..."
-                read
+                read -r
                 continue
                 ;;
             Q|q)

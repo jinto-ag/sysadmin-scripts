@@ -26,7 +26,7 @@ start_ollama_tunnel() {
     
     # Check if already running
     if is_running; then
-        log "Picoclaw already running (pid $(cat ${HOME}/.picoclaw/pid))"
+        log "Picoclaw already running (pid $(cat "${HOME}/.picoclaw/pid"))"
         return 0
     fi
     
@@ -46,7 +46,7 @@ case "${1:-start}" in
     start) start_ollama_tunnel ;;
     status)
         if is_running; then
-            echo "Running (pid $(cat ${HOME}/.picoclaw/pid))"
+            echo "Running (pid $(cat "${HOME}/.picoclaw/pid"))"
         else
             echo "Not running"
         fi

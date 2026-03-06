@@ -18,7 +18,7 @@ is_running() {
 
 start() {
     if is_running; then
-        echo "Already running (pid $(cat $PIDFILE))"
+        echo "Already running (pid $(cat "$PIDFILE"))"
         return 0
     fi
     
@@ -55,7 +55,7 @@ stop() {
 
 status() {
     if is_running; then
-        echo "STATUS=running pid=$(cat $PIDFILE)"
+        echo "STATUS=running pid=$(cat "$PIDFILE")"
         pgrep -af "$PATTERN" || true
     else
         echo "STATUS=stopped"

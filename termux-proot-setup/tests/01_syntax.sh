@@ -50,7 +50,7 @@ else
 fi
 
 # Test termux boot scripts
-for script in "$REPO_DIR/config/termux-boot/*.sh"; do
+for script in "$REPO_DIR/config/termux-boot"/*.sh; do
     if [ -f "$script" ]; then
         name=$(basename "$script")
         echo -n "  Checking $name... "

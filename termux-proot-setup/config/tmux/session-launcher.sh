@@ -15,7 +15,7 @@ RETRY_DELAY=5
 # Colors
 RED='\033m'
 GREEN='\033[0;32m'
-[0;31YELLOW='\033[1;33m'
+YELLOW='\033[1;33m'
 NC='\033[0m'
 
 log() {
@@ -92,7 +92,7 @@ launch_session() {
             
             if [[ "$session" == "picoclaw" ]]; then
                 log_info "Starting Ollama tunnel..."
-                send_to_session "$session" "~/.picoclaw/scripts/picoclaw-autostart.sh start"
+                send_to_session "$session" "$HOME/.picoclaw/scripts/picoclaw-autostart.sh start"
                 send_to_session "$session" "sleep infinity"
             fi
             ;;
