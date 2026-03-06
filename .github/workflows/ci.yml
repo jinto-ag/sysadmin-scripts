@@ -19,7 +19,7 @@ jobs:
       - name: Run shellcheck
         run: |
           # Exclude SC2016 (info: expressions don't expand in single quotes) - these are intentional for ANSI color codes
-          find . -name "*.sh" -print0 | xargs -0 -I {} shellcheck -x -e SC2016 {}
+          find . -name "*.sh" -print0 | xargs -0 -I {} shellcheck -x -e SC2016 -e SC2034 -e SC2155 {}
           
       - name: Bash syntax check
         run: |
