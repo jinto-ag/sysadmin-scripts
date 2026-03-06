@@ -16,3 +16,23 @@ curl -fsSL https://raw.githubusercontent.com/jinto-ag/sysadmin-scripts/main/devn
 > **Note:** Be sure to review scripts before piping them into bash!
 
 See the [DevNet Documentation](devnet/README.md) for full instructions, options, and architecture details.
+
+### [Termux + PRoot Setup](termux-proot-setup/README.md)
+
+Enterprise-grade setup for Termux with proot-distro (Debian) for local development with remote Ollama models via SSH tunnel.
+
+Features:
+- Remote Ollama Integration via SSH tunnel using picoclaw
+- Tmux Session Management with tmux-continuum and tmux-resurrect
+- Shell Configuration (zsh)
+- Termux Boot Scripts for auto-start
+- Backup & Restore capabilities
+- Interactive TUI setup
+
+```bash
+cd termux-proot-setup
+chmod +x setup.sh
+./setup.sh --all
+```
+
+See the [Termux Setup Documentation](termux-proot-setup/README.md) for full instructions.

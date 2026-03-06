@@ -1,0 +1,22 @@
+# Termux/Proot Debian Shell Environment Configuration
+# Sourced on every zsh shell start
+
+# Set TMUX socket for unified sessions across Termux and proot
+export TMUX=/data/data/com.termux/files/usr/var/run/tmux-0/default
+
+# Picoclaw configuration
+export PICOCLAW_OLLAMA_HOST="100.69.90.87"
+export PICOCLAW_OLLAMA_USER="nikhilsutra"
+export PICOCLAW_OLLAMA_LOCAL_PORT="11434"
+export PICOCLAW_OLLAMA_REMOTE_PORT="11434"
+
+# Start Picoclaw only when NOT in tmux (prevents nested sessions)
+if [ -z "$PICOCLAW_OLLAMA_STARTED" ] && [ -z "$TMUX" ]; then
+    export PICOCLAW_OLLAMA_STARTED=1
+    
+    if [ -x "$HOME/.picoclaw/scripts/picoclaw-autostart.sh" ]; then
+        if ! "$HOME/.picoclaw/scripts/picoclaw-autostart.sh" status 2>/dev/null | grep -q "running"; then
+            "$HOME/.picoclaw/scripts/picoclaw-autostart.sh" start &
+        fi
+    fi
+fi
